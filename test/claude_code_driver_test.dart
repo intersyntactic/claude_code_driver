@@ -59,7 +59,7 @@ prev=
 for a in "\$@"; do
   if [ "\$prev" = --system-prompt-file ]; then
     cat "\$a" > $r/system-prompt
-    dirname "\$a" > $r/scratch
+    dirname "\$HOME" > $r/scratch
   fi
   prev="\$a"
 done
@@ -113,6 +113,7 @@ exit $exit
     await ask(fakeClaude([init([]), result('ok')]), request: request);
 
     final args = recorded('args').split('\x00')..removeLast();
+    expect(args, ClaudeCodeDriver.arguments(haiku));
     expect(args.sublist(0, 4), ['-p', '--tools', '', '--restricted']);
     for (final flag in [
       '--safe-mode',

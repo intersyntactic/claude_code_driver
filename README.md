@@ -39,8 +39,19 @@ The full command, from `ClaudeCodeDriver.arguments`:
 claude -p --tools "" --restricted --safe-mode --strict-mcp-config \
   --setting-sources "" --disable-slash-commands --no-session-persistence \
   --input-format text --output-format stream-json --verbose \
-  --include-partial-messages --model <model> --system-prompt-file <file>
+  --include-partial-messages --model <model> --system-prompt-file ../system-prompt
 ```
+
+It is the same for every call to a model: the system prompt's file sits
+beside the call's empty working directory, named by a relative path that
+claude resolves there. So what the airlock approves is `model`,
+`systemPrompt` and `request`, each passed verbatim, and the rest of the
+command line is a constant of this driver's commit.
+
+With exactly this command line, claude 2.1.311 printed four events: `init`
+(`"tools":[]`, `"mcp_servers":[]`, `"skills":[]`, `"slash_commands":[]`, and
+three built-in plugins), `status`, `assistant` and `result`. There were no
+hook events.
 
 ## One call
 
@@ -51,7 +62,10 @@ claude -p --tools "" --restricted --safe-mode --strict-mcp-config \
 - **Nothing of the driver's own environment** but `PATH`. The seat's token
   goes in as `CLAUDE_CODE_OAUTH_TOKEN`, readable only by the driver's user.
 - **The approved bytes, verbatim.** `request` goes to stdin and
-  `systemPrompt` to `--system-prompt-file`, a file rather than an argument,
+  `systemPrompt` to `--system-prompt-file`, each as the UTF-8 encoding of
+  the string, so a hash of what was approved is a hash of
+  `utf8.encode(systemPrompt)` and `utf8.encode(request)`. The system prompt
+  is a file rather than an argument,
   since an argument is visible to every user in `ps` and Linux caps one at
   128 KiB. Claude Code takes one text message per call and no earlier
   assistant turns, so the caller renders the whole trajectory into

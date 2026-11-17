@@ -10,7 +10,8 @@ import 'credential.dart';
 /// seat the call names, with every built-in tool switched off.
 ///
 /// One call is one text message: [askTheModel]'s `request` goes to stdin
-/// verbatim and `systemPrompt` to `--system-prompt-file` verbatim. Claude
+/// and `systemPrompt` to `--system-prompt-file`, each as its UTF-8 bytes,
+/// and the command line is [arguments], fixed for a model. Claude
 /// Code takes no earlier assistant turns, so a caller renders the whole
 /// trajectory into `request`. The request is text, never an API body, so it
 /// names no model and the model is only ever the one decided.
@@ -51,7 +52,10 @@ final class ClaudeCodeDriver implements AsksTheModel {
   /// `--safe-mode` stops hooks, skills, plugins and MCP servers the user's
   /// settings would load, which `--setting-sources ""` alone does not.
   /// Never `--bare`: it reads only `ANTHROPIC_API_KEY`, never the seat.
-  static List<String> arguments(ModelName model, File systemPrompt) => [
+  ///
+  /// The same for every call to [model]: the system prompt is named by a
+  /// path relative to the working directory, which claude resolves there.
+  static List<String> arguments(ModelName model) => [
     '-p',
     '--tools',
     '',
@@ -71,7 +75,7 @@ final class ClaudeCodeDriver implements AsksTheModel {
     '--model',
     model.value,
     '--system-prompt-file',
-    systemPrompt.path,
+    '../system-prompt',
   ];
 
   @override
@@ -93,15 +97,16 @@ final class ClaudeCodeDriver implements AsksTheModel {
       final config = await Directory('${scratch.path}/config').create();
       final work = await Directory('${scratch.path}/work').create();
       // A file, not an argument: an argument is readable by every user on
-      // the box in `ps`, and Linux caps one at 128 KiB.
-      final prompt = File('${scratch.path}/system-prompt');
-      await prompt.writeAsString(systemPrompt, flush: true);
+      // the box in `ps`, and Linux caps one at 128 KiB. Beside [work], where
+      // arguments' `../system-prompt` finds it.
+      await File('${scratch.path}/system-prompt')
+          .writeAsString(systemPrompt, flush: true);
 
       final Process process;
       try {
         process = await Process.start(
           _claude,
-          arguments(model, prompt),
+          arguments(model),
           workingDirectory: work.path,
           environment: {
             'PATH': _path,
