@@ -94,80 +94,43 @@ final class ClaudeCodeDriverService {
         bytes.add(chunk);
       }
       if (tooLarge) {
-        _write(socket, _finished(const Refused('call too large')));
+        _write(socket, const Finished(Refused('call too large')));
         await socket.close();
         return;
       }
-      final ModelCall call;
+      final ModelSignInName signIn;
+      final ModelName model;
+      final String systemPrompt;
+      final String request;
       try {
-        call = ModelCall.fromJson(
+        (signIn, model, systemPrompt, request) = decodeModelCall(
           jsonDecode(utf8.decode(bytes.takeBytes(), allowMalformed: true)),
         );
       } on FormatException catch (e) {
-        _write(socket, _finished(Refused('not a call: ${e.message}')));
+        _write(socket, Finished(Refused('not a call: ${e.message}')));
         await socket.close();
         return;
       }
       final outcome = await _driver.askTheModel(
-        call.signIn,
-        call.model,
-        call.systemPrompt,
-        call.request,
-        report: (progress) => _write(socket, {
-          'kind': 'reported',
-          'progress': encodeProgress(progress),
-        }),
+        signIn,
+        model,
+        systemPrompt,
+        request,
+        report: (progress) => _write(socket, Reported(progress)),
       );
-      _write(socket, _finished(outcome));
+      _write(socket, Finished(outcome));
       await socket.close();
     } on SocketException {
       socket.destroy();
     }
   }
 
-  static Object? _finished(Outcome<ModelReply> outcome) => {
-    'kind': 'finished',
-    'outcome': encodeOutcome(outcome, encodeModelReply),
-  };
-
-  static void _write(Socket socket, Object? message) =>
-      socket.add(utf8.encode('${jsonEncode(message)}\n'));
-}
-
-/// One call to the model as it crosses the socket.
-final class ModelCall {
-  const ModelCall(this.signIn, this.model, this.systemPrompt, this.request);
-
-  final ModelSignInName signIn;
-  final ModelName model;
-  final String systemPrompt;
-  final String request;
-
-  static ModelCall fromJson(Object? json) => switch (json) {
-    {
-      'signIn': final Object? signIn,
-      'model': final Object? model,
-      'systemPrompt': final String systemPrompt,
-      'request': final String request,
-    } =>
-      ModelCall(
-        decodeModelSignInName(signIn, 'signIn'),
-        decodeModelName(model, 'model'),
-        systemPrompt,
-        request,
-      ),
-    Map<String, Object?>() => throw const FormatException(
-      'needs signIn, model, systemPrompt and request',
-    ),
-    _ => throw const FormatException('not an object'),
-  };
-
-  Object? toJson() => {
-    'signIn': encodeModelSignInName(signIn),
-    'model': encodeModelName(model),
-    'systemPrompt': systemPrompt,
-    'request': request,
-  };
+  static void _write(Socket socket, ProgramMessage<ModelReply> message) =>
+      socket.add(
+        utf8.encode(
+          '${jsonEncode(encodeProgramMessage(message, encodeModelReply))}\n',
+        ),
+      );
 }
 
 /// [AsksTheModel] in another process: passes each call to the service at
@@ -192,19 +155,17 @@ final class ClaudeCodeDriverSocket implements AsksTheModel {
       );
       s.add(
         utf8.encode(
-          jsonEncode(ModelCall(signIn, model, systemPrompt, request).toJson()),
+          jsonEncode(encodeModelCall(signIn, model, systemPrompt, request)),
         ),
       );
       await s.close();
       await for (final line
           in utf8.decoder.bind(s).transform(const LineSplitter())) {
-        switch (jsonDecode(line)) {
-          case {'kind': 'reported', 'progress': final Object? progress}:
-            report(decodeProgress(progress));
-          case {'kind': 'finished', 'outcome': final Object? outcome}:
-            return decodeOutcome(outcome, decodeModelReply);
-          default:
-            return const Refused('claude code driver: unreadable answer');
+        switch (decodeProgramMessage(jsonDecode(line), decodeModelReply)) {
+          case Reported(:final progress):
+            report(progress);
+          case Finished(:final outcome):
+            return outcome;
         }
       }
       return const Refused('claude code driver: refused caller');
