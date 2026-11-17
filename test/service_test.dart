@@ -89,7 +89,7 @@ void main() {
     expect(
       await raw('{}'),
       '{"kind":"finished","outcome":{"kind":"refused",'
-      '"why":"not a call: needs signIn, model, systemPrompt and request"}}',
+      '"why":"not a call: modelCall.signIn: not a string"}}',
     );
     expect(driver.calls, isEmpty);
   });
@@ -101,7 +101,7 @@ void main() {
       await raw(
         '{"signIn":"Nick!","model":"m","systemPrompt":"","request":"x"}',
       ),
-      contains('not a call: signIn: not a model sign-in'),
+      contains('not a call: modelCall.signIn: not a model sign-in'),
     );
     expect(driver.calls, isEmpty);
   });

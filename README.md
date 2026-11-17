@@ -131,7 +131,7 @@ closes:
 `{}` is a probe that never reaches the model:
 
 ```
-← {"kind":"finished","outcome":{"kind":"refused","why":"not a call: needs signIn, model, systemPrompt and request"}}
+← {"kind":"finished","outcome":{"kind":"refused","why":"not a call: modelCall.signIn: not a string"}}
 ```
 
 The airlock side is `ClaudeCodeDriverSocket` from
