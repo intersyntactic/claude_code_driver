@@ -1,0 +1,23 @@
+name: is_claude_code_driver
+description: >-
+  intersyntactic's Claude Code driver: asks the model through `claude -p`
+  under a Claude Code seat, with every built-in tool switched off, holding
+  the seat's token so no loop or record ever sees it.
+version: 0.1.0
+repository: https://github.com/intersyntactic/claude_code_driver
+publish_to: none
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  # AsksTheModel is in is_effects 0.7.0, still
+  # https://github.com/intersyntactic/effects/pull/4; ^0.7.0 once published.
+  is_effects:
+    git:
+      url: https://github.com/intersyntactic/effects
+      ref: b313ac87188fb553b9a07ad31407dc1de9c4a610
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.25.0
