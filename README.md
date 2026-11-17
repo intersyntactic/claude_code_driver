@@ -70,6 +70,11 @@ hook events.
   128 KiB. Claude Code takes one text message per call and no earlier
   assistant turns, so the caller renders the whole trajectory into
   `request`. That is text, never an API body, so it names no model.
+  `AsksTheModel`'s rule, that a model named in the request must be the
+  decided one, holds by construction: only `--model` chooses one.
+- **Nothing trimmed or re-encoded.** A test hands the driver whitespace at
+  both ends, CRLF, a BOM, a NUL and non-ASCII, and checks that the bytes
+  `claude` reads equal `utf8.encode` of each string.
 - **The record holds what was given to `claude -p`**, not the exact wire to
   Anthropic: Claude Code may add context of its own.
 - **Streaming.** Each text delta is reported as `ReplyArriving`; the

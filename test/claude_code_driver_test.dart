@@ -78,6 +78,7 @@ exit $exit
     String claude, {
     Duration limit = const Duration(seconds: 10),
     List<String>? log,
+    String systemPrompt = 'You are Cam.',
     String request = 'hello',
   }) async {
     final reported = <Progress>[];
@@ -87,9 +88,29 @@ exit $exit
       path: '/usr/bin:/bin',
       limit: limit,
       log: log?.add,
-    ).askTheModel(seat, haiku, 'You are Cam.', request, report: reported.add);
+    ).askTheModel(seat, haiku, systemPrompt, request, report: reported.add);
     return (outcome, reported);
   }
+
+  test('hands claude the exact UTF-8 bytes, trimming nothing', () async {
+    // Whitespace at both ends, CRLF, a BOM, a NUL and non-ASCII: anything a
+    // trim or re-encode would change.
+    const systemPrompt = '﻿\n  You are Cam.\r\n\t\x00 “é” \u{1F600}  \n\n';
+    const request = '  \r\nline\n\n  trailing  \n';
+    await ask(
+      fakeClaude([init([]), result('ok')]),
+      systemPrompt: systemPrompt,
+      request: request,
+    );
+    expect(
+      File('${record.path}/system-prompt').readAsBytesSync(),
+      utf8.encode(systemPrompt),
+    );
+    expect(
+      File('${record.path}/stdin').readAsBytesSync(),
+      utf8.encode(request),
+    );
+  });
 
   test('streams the reply and gives the whole of it', () async {
     final (outcome, reported) = await ask(
