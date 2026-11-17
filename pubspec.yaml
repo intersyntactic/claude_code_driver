@@ -11,12 +11,7 @@ environment:
   sdk: ^3.13.0
 
 dependencies:
-  # AsksTheModel is in is_effects 0.7.0, still
-  # https://github.com/intersyntactic/effects/pull/4; ^0.7.0 once published.
-  is_effects:
-    git:
-      url: https://github.com/intersyntactic/effects
-      ref: b313ac87188fb553b9a07ad31407dc1de9c4a610
+  is_effects: ^0.7.0
 
 dev_dependencies:
   lints: ^6.1.0
