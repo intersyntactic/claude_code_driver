@@ -75,6 +75,33 @@ void main() {
     ));
   });
 
+  test('a driver the check refuses never sees the call', () async {
+    final service = await ClaudeCodeDriverService.start(driver, me, socket);
+    addTearDown(service.close);
+    final checked = <Socket>[];
+    final out = await ClaudeCodeDriverSocket(
+      socket,
+      checkDriver: (s) async {
+        checked.add(s);
+        return 'not release 3';
+      },
+    ).askTheModel(seat, haiku, '', 'hello', report: (_) {});
+    expect((out as Refused).why, 'claude code driver: not release 3');
+    expect(checked, hasLength(1));
+    expect(driver.calls, isEmpty);
+  });
+
+  test('a driver the check passes is asked as usual', () async {
+    final service = await ClaudeCodeDriverService.start(driver, me, socket);
+    addTearDown(service.close);
+    final out = await ClaudeCodeDriverSocket(
+      socket,
+      checkDriver: (_) async => null,
+    ).askTheModel(seat, haiku, '', 'hello', report: (_) {});
+    expect((out as Ran<ModelReply>).output.text, 'hello');
+    expect(driver.calls, hasLength(1));
+  });
+
   test('carries a refusal back across the socket', () async {
     final service = await ClaudeCodeDriverService.start(driver, me, socket);
     addTearDown(service.close);
