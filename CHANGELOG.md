@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+
+- is_effects ^0.11.0. Nothing `AsksTheModel` uses changed.
+
 ## 0.3.0
 
 - is_effects ^0.9.0. A reply is a `FinishedReply`, or a `CutOffReply` when `claude -p` stopped at a token limit (`max_tokens`, `model_context_window_exceeded`).
