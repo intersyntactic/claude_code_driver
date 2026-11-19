@@ -22,7 +22,7 @@ final class Echo implements AsksTheModel {
     for (final word in request.split(' ')) {
       report(ReplyArriving(word));
     }
-    return Ran(ModelReply(request));
+    return Ran(FinishedReply(text: request));
   }
 }
 

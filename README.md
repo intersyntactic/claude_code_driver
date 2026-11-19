@@ -83,8 +83,16 @@ hook events.
 - **The record holds what was given to `claude -p`**, not the exact wire to
   Anthropic: Claude Code may add context of its own.
 - **Streaming.** Each text delta is reported as `ReplyArriving`; the
-  `result` event's text is the `ModelReply`. A result with `is_error` is
-  `Refused` with its words, such as `Not logged in · Please run /login`.
+  `result` event's text is the `ModelReply`: a `CutOffReply` when its
+  `stop_reason` is `max_tokens` or `model_context_window_exceeded`, a
+  `FinishedReply` otherwise. A result with `is_error` is `Refused` with its
+  words, such as `Not logged in · Please run /login`.
+- **Usage.** The reply's `ModelUsage` is the last model call of the run
+  (the last of `usage.iterations`, or the run's totals when none is
+  listed), so its `context` is how full the context was at the end.
+  `contextWindow` comes from `modelUsage` for the model asked for. Claude
+  Code's own context counts, since the model read it. A result with no
+  readable usage gives none.
 - **Ten minutes** at most, then the process is killed.
 - The seat is chosen per call. Concurrent calls share its limits.
 
