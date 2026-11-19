@@ -25,12 +25,24 @@ String delta(String text) => jsonEncode({
   },
 });
 
-String result(String text, {bool error = false}) => jsonEncode({
+String result(
+  String text, {
+  bool error = false,
+  Map<String, Object?> more = const {},
+}) => jsonEncode({
   'type': 'result',
   'subtype': 'success',
   'is_error': error,
   'result': text,
+  ...more,
 });
+
+Map<String, Object?> tokens(int input, int cacheRead, int created, int out) => {
+  'input_tokens': input,
+  'cache_read_input_tokens': cacheRead,
+  'cache_creation_input_tokens': created,
+  'output_tokens': out,
+};
 
 void main() {
   late Directory dir;
@@ -221,6 +233,78 @@ exit $exit
     expect(recorded('cwd').trim(), endsWith('$scratch/work'));
     expect(recorded('ls'), isEmpty);
     expect(Directory(scratch).existsSync(), isFalse);
+  });
+
+  test('reports what the last model call spent, and the window', () async {
+    // The shape claude 2.1.311 printed on 19 Nov, two calls in one run.
+    final (outcome, _) = await ask(
+      fakeClaude([
+        init([]),
+        result(
+          'ok',
+          more: {
+            'stop_reason': 'end_turn',
+            'usage': {
+              ...tokens(9, 900, 1000, 50),
+              'iterations': [
+                {...tokens(4, 0, 595, 30), 'type': 'message'},
+                {...tokens(5, 900, 405, 20), 'type': 'message'},
+              ],
+            },
+            'modelUsage': {
+              'claude-sonnet-5-5': {'contextWindow': 200000},
+              'claude-haiku-5-5': {'contextWindow': 1000000},
+            },
+          },
+        ),
+      ]),
+    );
+    final reply = (outcome as Ran<ModelReply>).output as FinishedReply;
+    expect(reply.text, 'ok');
+    expect(
+      reply.usage,
+      const ModelUsage(
+        input: 5,
+        cacheRead: 900,
+        output: 20,
+        cacheCreation: 405,
+        contextWindow: 1000000,
+      ),
+    );
+  });
+
+  test('falls back to the run totals when no iteration is listed', () async {
+    final (outcome, _) = await ask(
+      fakeClaude([
+        init([]),
+        result('ok', more: {'usage': tokens(2, 0, 595, 4)}),
+      ]),
+    );
+    expect(
+      (outcome as Ran<ModelReply>).output.usage,
+      const ModelUsage(input: 2, cacheRead: 0, output: 4, cacheCreation: 595),
+    );
+  });
+
+  test('gives no usage when the result reports none', () async {
+    final (outcome, _) = await ask(fakeClaude([init([]), result('ok')]));
+    final reply = (outcome as Ran<ModelReply>).output;
+    expect(reply, isA<FinishedReply>());
+    expect(reply.usage, isNull);
+  });
+
+  test('a reply stopped by a token limit is cut off, not finished', () async {
+    for (final stop in ['max_tokens', 'model_context_window_exceeded']) {
+      final (outcome, _) = await ask(
+        fakeClaude([
+          init([]),
+          result('half a rep', more: {'stop_reason': stop}),
+        ]),
+      );
+      final reply = (outcome as Ran<ModelReply>).output;
+      expect(reply, isA<CutOffReply>(), reason: stop);
+      expect(reply.text, 'half a rep');
+    }
   });
 
   test('refuses, before any model turn, when claude offers a tool', () async {

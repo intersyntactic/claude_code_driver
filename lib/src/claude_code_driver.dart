@@ -130,7 +130,7 @@ final class ClaudeCodeDriver implements AsksTheModel {
       } on ProcessException catch (e) {
         return Refused('claude did not start: ${e.message}');
       }
-      return await _run(process, prompt, report, '$signIn $model');
+      return await _run(process, prompt, report, model, '$signIn $model');
     } finally {
       await scratch.delete(recursive: true);
     }
@@ -140,6 +140,7 @@ final class ClaudeCodeDriver implements AsksTheModel {
     Process process,
     String request,
     Report report,
+    ModelName model,
     String call,
   ) async {
     final stderr = StringBuffer();
@@ -158,7 +159,7 @@ final class ClaudeCodeDriver implements AsksTheModel {
         .transform(const LineSplitter());
     final reading = () async {
       await for (final line in lines) {
-        switch (ClaudeEvent.parse(line)) {
+        switch (ClaudeEvent.parse(line, model: model)) {
           case Initialised(:final tools) when tools.isNotEmpty:
             // The last wall: if the flags ever stop taking every tool away,
             // no model turn runs.
@@ -241,7 +242,8 @@ final class ClaudeCodeDriver implements AsksTheModel {
 sealed class ClaudeEvent {
   const ClaudeEvent();
 
-  static ClaudeEvent parse(String line) {
+  /// [model] is the one asked for, whose context window a result reports.
+  static ClaudeEvent parse(String line, {required ModelName model}) {
     final Object? json;
     try {
       json = jsonDecode(line);
@@ -266,7 +268,11 @@ sealed class ClaudeEvent {
         'is_error': false,
         'result': final String text,
       } =>
-        Answered(ModelReply(text)),
+        Answered(switch (json) {
+          {'stop_reason': 'max_tokens' || 'model_context_window_exceeded'} =>
+            CutOffReply(text: text, usage: _usage(json, model)),
+          _ => FinishedReply(text: text, usage: _usage(json, model)),
+        }),
       // An error the call itself reports, such as `Not logged in`, comes as
       // a `success` whose `is_error` is true and whose result says why.
       {'type': 'result', 'is_error': true, 'result': final String why}
@@ -278,6 +284,45 @@ sealed class ClaudeEvent {
       {'type': 'result'} => const Unanswered('result of no kind'),
       Map<String, Object?>() => const Other(),
       _ => const Unreadable(),
+    };
+  }
+
+  /// What a result says the run spent, or null when it says nothing
+  /// readable. The last of `usage.iterations` is the last model call, whose
+  /// input is how full the context was; the run's totals stand in when no
+  /// iteration is listed. Claude Code's own context counts: the model read
+  /// it.
+  static ModelUsage? _usage(Object? result, ModelName model) {
+    final last = switch (result) {
+      {'usage': {'iterations': [..., final Map<String, Object?> last]}} => last,
+      {'usage': final Map<String, Object?> usage} => usage,
+      _ => null,
+    };
+    final window = switch (result) {
+      {'modelUsage': final Map<String, Object?> byModel} =>
+        switch (byModel[model.value]) {
+          {'contextWindow': final int window} => window,
+          _ => null,
+        },
+      _ => null,
+    };
+    return switch (last) {
+      {
+        'input_tokens': final int input,
+        'cache_read_input_tokens': final int cacheRead,
+        'output_tokens': final int output,
+      } =>
+        ModelUsage(
+          input: input,
+          cacheRead: cacheRead,
+          output: output,
+          cacheCreation: switch (last) {
+            {'cache_creation_input_tokens': final int created} => created,
+            _ => null,
+          },
+          contextWindow: window,
+        ),
+      _ => null,
     };
   }
 

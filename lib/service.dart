@@ -133,12 +133,20 @@ final class ClaudeCodeDriverService {
       );
 }
 
+/// Looks at the driver on the other end of a connected socket, such as which
+/// release the kernel says it is, before any call is written to it. Returns
+/// why to refuse it, or null to go on.
+typedef CheckDriver = Future<String?> Function(Socket driver);
+
 /// [AsksTheModel] in another process: passes each call to the service at
 /// [socket] and reports the reply as it streams back. Holds no secret.
 final class ClaudeCodeDriverSocket implements AsksTheModel {
-  ClaudeCodeDriverSocket(this.socket);
+  /// [checkDriver] runs on every connection before the call is sent, so a
+  /// driver it refuses never sees the call.
+  ClaudeCodeDriverSocket(this.socket, {this.checkDriver});
 
   final File socket;
+  final CheckDriver? checkDriver;
 
   @override
   Future<Outcome<ModelReply>> askTheModel(
@@ -153,6 +161,10 @@ final class ClaudeCodeDriverSocket implements AsksTheModel {
         InternetAddress(socket.path, type: InternetAddressType.unix),
         0,
       );
+      if (await checkDriver?.call(s) case final why?) {
+        s.destroy();
+        return Refused('claude code driver: $why');
+      }
       s.add(
         utf8.encode(
           jsonEncode(encodeModelCall(signIn, model, systemPrompt, request)),
