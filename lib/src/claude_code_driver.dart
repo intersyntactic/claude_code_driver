@@ -5,16 +5,17 @@ import 'dart:io';
 import 'package:is_effects/is_effects.dart';
 
 import 'credential.dart';
+import 'model_request.dart';
 
 /// [AsksTheModel] by running `claude -p` once per call, signed in as the
 /// seat the call names, with every built-in tool switched off.
 ///
-/// One call is one text message: [askTheModel]'s `request` goes to stdin
-/// and `systemPrompt` to `--system-prompt-file`, each as its UTF-8 bytes,
-/// and the command line is [arguments], fixed for a model. Claude
-/// Code takes no earlier assistant turns, so a caller renders the whole
-/// trajectory into `request`. The request is text, never an API body, so it
-/// names no model and the model is only ever the one decided.
+/// One call is one text message: [askTheModel]'s `request`, an input array
+/// of turns, goes to stdin flattened by [promptFor], and `systemPrompt` to
+/// `--system-prompt-file` as its UTF-8 bytes; the command line is
+/// [arguments], fixed for a model. Claude Code takes no earlier assistant
+/// turns, so the turns become lines of one text. No turn names a model, so
+/// the model is only ever the one decided.
 ///
 /// The record holds what was given to `claude -p`, not the exact wire to
 /// Anthropic: Claude Code may add context of its own.
@@ -88,6 +89,12 @@ final class ClaudeCodeDriver implements AsksTheModel {
   }) async {
     final credential = _signIns[signIn];
     if (credential == null) return Refused('no model sign-in $signIn');
+    final String prompt;
+    try {
+      prompt = promptFor(request);
+    } on FormatException catch (e) {
+      return Refused('not a request: ${e.message}');
+    }
 
     // A fresh home and config per call, so no login, transcript or setting
     // outlives it or is shared between concurrent calls.
@@ -123,7 +130,7 @@ final class ClaudeCodeDriver implements AsksTheModel {
       } on ProcessException catch (e) {
         return Refused('claude did not start: ${e.message}');
       }
-      return await _run(process, request, report, '$signIn $model');
+      return await _run(process, prompt, report, '$signIn $model');
     } finally {
       await scratch.delete(recursive: true);
     }

@@ -112,6 +112,55 @@ exit $exit
     );
   });
 
+  test('flattens an input array into one line per turn', () async {
+    // Content exactly as sent: CRLF, a newline, padding and non-ASCII.
+    await ask(
+      fakeClaude([init([]), result('ok')]),
+      request: jsonEncode([
+        {'role': 'user', 'content': 'hey are you there'},
+        {'role': 'assistant', 'content': '  yep,\r\nhere “é” \u{1F600} '},
+        {'role': 'user', 'content': 'two\nlines'},
+      ]),
+    );
+    expect(
+      File('${record.path}/stdin').readAsBytesSync(),
+      utf8.encode(
+        'User: hey are you there\n'
+        'Agent:   yep,\r\nhere “é” \u{1F600} \n'
+        'User: two\nlines',
+      ),
+    );
+  });
+
+  test('refuses a JSON request that is not an array of turns', () async {
+    final claude = fakeClaude([init([]), result('ok')]);
+    for (final (request, why) in [
+      ('[]', 'not a non-empty array of turns'),
+      ('{"role":"user","content":"hi"}', 'not a non-empty array of turns'),
+      ('"hi"', 'not a non-empty array of turns'),
+      (
+        '[{"role":"system","content":"be Cam"}]',
+        'turn 0: role is not user or assistant',
+      ),
+      (
+        '[{"role":"user","content":"hi"},{"role":"user"}]',
+        'turn 1 is not exactly a role and content',
+      ),
+      (
+        '[{"role":"user","content":["hi"]}]',
+        'turn 0 is not exactly a role and content',
+      ),
+      (
+        '[{"role":"user","content":"hi","model":"gpt-6"}]',
+        'turn 0 is not exactly a role and content',
+      ),
+    ]) {
+      final (outcome, _) = await ask(claude, request: request);
+      expect((outcome as Refused).why, 'not a request: $why', reason: request);
+    }
+    expect(File('${record.path}/args').existsSync(), isFalse);
+  });
+
   test('streams the reply and gives the whole of it', () async {
     final (outcome, reported) = await ask(
       fakeClaude([

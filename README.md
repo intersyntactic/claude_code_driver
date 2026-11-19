@@ -61,15 +61,20 @@ hook events.
   ones.
 - **Nothing of the driver's own environment** but `PATH`. The seat's token
   goes in as `CLAUDE_CODE_OAUTH_TOKEN`, readable only by the driver's user.
-- **The approved bytes, verbatim.** `request` goes to stdin and
-  `systemPrompt` to `--system-prompt-file`, each as the UTF-8 encoding of
-  the string, so a hash of what was approved is a hash of
-  `utf8.encode(systemPrompt)` and `utf8.encode(request)`. The system prompt
-  is a file rather than an argument,
-  since an argument is visible to every user in `ps` and Linux caps one at
-  128 KiB. Claude Code takes one text message per call and no earlier
-  assistant turns, so the caller renders the whole trajectory into
-  `request`. That is text, never an API body, so it names no model.
+- **The approved bytes, verbatim.** `systemPrompt` goes to
+  `--system-prompt-file` as the UTF-8 encoding of the string. The system
+  prompt is a file rather than an argument, since an argument is visible to
+  every user in `ps` and Linux caps one at 128 KiB.
+- **The request is an input array of turns**, the shape every model driver
+  reads, so the airlock can switch drivers by socket path alone:
+  `[{"role":"user","content":"…"},{"role":"assistant","content":"…"}]`,
+  oldest first, never empty, no system turn. Claude Code takes one text
+  message per call and no earlier assistant turns, so the driver flattens
+  the turns into one line each, `User: …` or `Agent: …`, joined with `\n`,
+  and that text goes to stdin. Each turn's content goes exactly as sent.
+  Anything else that is JSON is refused before `claude` starts. A request
+  that is not JSON at all is taken as already-flattened text and goes as it
+  is, so a loop still sending text keeps working. No turn names a model, so
   `AsksTheModel`'s rule, that a model named in the request must be the
   decided one, holds by construction: only `--model` chooses one.
 - **Nothing trimmed or re-encoded.** A test hands the driver whitespace at
