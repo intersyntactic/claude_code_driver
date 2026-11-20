@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2
+
+- is_effects ^0.12.0. Nothing `AsksTheModel` or the model-call codec uses changed.
+
 ## 0.3.1
 
 - is_effects ^0.11.0. Nothing `AsksTheModel` uses changed.
