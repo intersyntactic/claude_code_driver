@@ -22,18 +22,18 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:is_effects/is_effects.dart';
-import 'package:is_peer_user_admission/is_peer_user_admission.dart';
+import 'package:is_unix_socket_user_check/is_unix_socket_user_check.dart';
 
 final class ClaudeCodeDriverService {
   ClaudeCodeDriverService._(
     this._driver,
-    this._admission,
+    this._socketUserCheck,
     this._socket,
     this._server,
   );
 
   final AsksTheModel _driver;
-  final PeerUserAdmission _admission;
+  final SocketUserCheck _socketUserCheck;
   final File _socket;
   final ServerSocket _server;
 
@@ -47,11 +47,11 @@ final class ClaudeCodeDriverService {
     AsksTheModel driver,
     UserId caller,
     File socket, {
-    PeerUserReader? reader,
+    SocketUserReader? reader,
   }) async {
     final service = ClaudeCodeDriverService._(
       driver,
-      PeerUserAdmission.only(caller, reader: reader),
+      SocketUserCheck.only(caller, reader: reader),
       socket,
       await _bind(socket),
     );
@@ -82,7 +82,7 @@ final class ClaudeCodeDriverService {
 
   Future<void> _serve(Socket socket) async {
     try {
-      if (!_admission.admits(socket)) {
+      if (!_socketUserCheck.allows(socket)) {
         socket.destroy();
         return;
       }

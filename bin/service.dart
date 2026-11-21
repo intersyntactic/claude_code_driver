@@ -21,7 +21,7 @@ import 'dart:io';
 import 'package:is_claude_code_driver/is_claude_code_driver.dart';
 import 'package:is_claude_code_driver/service.dart';
 import 'package:is_effects/is_effects.dart';
-import 'package:is_peer_user_admission/is_peer_user_admission.dart';
+import 'package:is_unix_socket_user_check/is_unix_socket_user_check.dart';
 
 /// The oldest Claude Code with every flag the driver passes.
 const _leastClaude = '2.1.311';

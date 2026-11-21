@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:is_claude_code_driver/service.dart';
 import 'package:is_effects/is_effects.dart';
-import 'package:is_peer_user_admission/is_peer_user_admission.dart';
+import 'package:is_unix_socket_user_check/is_unix_socket_user_check.dart';
 import 'package:test/test.dart';
 
 /// Streams the request back a word at a time, and refuses `refuse`.
@@ -152,10 +152,10 @@ void main() {
     expect(driver.calls, isEmpty);
   });
 
-  test('admits only the caller as the kernel reports each peer', () async {
+  test('allows only the caller as the kernel reports each peer', () async {
     final caller = UserId.parse(1001)!;
     // What Linux's SO_PEERCRED writes: pid, uid, gid, 32 bits each.
-    PeerUserReader peerIs(int? uid) => PeerUserReader(
+    SocketUserReader peerIs(int? uid) => SocketUserReader(
       kernel: Kernel.linux,
       readOption: (_, _) => uid == null
           ? Uint8List(4)
