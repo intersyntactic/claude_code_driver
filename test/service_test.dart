@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:is_claude_code_driver/service.dart';
 import 'package:is_effects/is_effects.dart';
+import 'package:is_unix_socket_user_check/is_unix_socket_user_check.dart';
 import 'package:test/test.dart';
 
 /// Streams the request back a word at a time, and refuses `refuse`.
@@ -26,7 +28,9 @@ final class Echo implements AsksTheModel {
   }
 }
 
-final me = int.parse((Process.runSync('id', ['-u']).stdout as String).trim());
+final me = UserId.parse(
+  int.parse((Process.runSync('id', ['-u']).stdout as String).trim()),
+)!;
 final seat = ModelSignInName.parse('nick-claude-team')!;
 final haiku = ModelName.parse('claude-haiku-5-5')!;
 
@@ -134,7 +138,11 @@ void main() {
   });
 
   test('closes on any other user, unanswered', () async {
-    final service = await ClaudeCodeDriverService.start(driver, me + 1, socket);
+    final service = await ClaudeCodeDriverService.start(
+      driver,
+      UserId.parse(me.number + 1)!,
+      socket,
+    );
     addTearDown(service.close);
     final out = await ClaudeCodeDriverSocket(socket)
         .askTheModel(seat, haiku, '', 'hello', report: (_) {});
@@ -142,6 +150,43 @@ void main() {
     // client's words vary; that it is refused and never asked does not.
     expect((out as Refused).why, startsWith('claude code driver: '));
     expect(driver.calls, isEmpty);
+  });
+
+  test('allows only the caller as the kernel reports each peer', () async {
+    final caller = UserId.parse(1001)!;
+    // What Linux's SO_PEERCRED writes: pid, uid, gid, 32 bits each.
+    SocketUserReader peerIs(int? uid) => SocketUserReader(
+      kernel: Kernel.linux,
+      readOption: (_, _) => uid == null
+          ? Uint8List(4)
+          : (ByteData(12)
+                  ..setUint32(0, 42, Endian.host)
+                  ..setUint32(4, uid, Endian.host)
+                  ..setUint32(8, uid, Endian.host))
+                .buffer
+                .asUint8List(),
+      overflowUid: () => 65534,
+    );
+    for (final (uid, asked) in [
+      (1001, true),
+      (1002, false),
+      (65534, false),
+      (4294967295, false),
+      (null, false),
+    ]) {
+      driver = Echo();
+      final service = await ClaudeCodeDriverService.start(
+        driver,
+        caller,
+        socket,
+        reader: peerIs(uid),
+      );
+      final out = await ClaudeCodeDriverSocket(socket)
+          .askTheModel(seat, haiku, '', 'hello', report: (_) {});
+      await service.close();
+      expect(out is Ran<ModelReply>, asked, reason: 'peer $uid');
+      expect(driver.calls, hasLength(asked ? 1 : 0), reason: 'peer $uid');
+    }
   });
 
   test('will not start over a socket something listens on', () async {
