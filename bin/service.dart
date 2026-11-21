@@ -21,6 +21,7 @@ import 'dart:io';
 import 'package:is_claude_code_driver/is_claude_code_driver.dart';
 import 'package:is_claude_code_driver/service.dart';
 import 'package:is_effects/is_effects.dart';
+import 'package:is_peer_user_admission/is_peer_user_admission.dart';
 
 /// The oldest Claude Code with every flag the driver passes.
 const _leastClaude = '2.1.311';
@@ -36,7 +37,9 @@ Future<void> main() async {
       env[name] ?? _fail('$name is not set'),
   ];
   final claude = env['CLAUDE_CODE_DRIVER_CLAUDE'] ?? 'claude';
-  final uid = _uidOf(caller) ?? _fail('no user $caller');
+  final uid =
+      _uidOf(caller) ??
+      _fail('no user $caller, or one that names no real user');
   final version =
       await ClaudeCodeDriver.versionOf(claude) ??
       _fail('$claude --version did not answer with a version');
@@ -75,10 +78,16 @@ Future<void> main() async {
   exit(0);
 }
 
-int? _uidOf(String user) {
-  if (int.tryParse(user) case final uid?) return uid;
-  final r = Process.runSync('id', ['-u', user]);
-  return r.exitCode == 0 ? int.tryParse(r.stdout.toString().trim()) : null;
+/// [user], by name or id, as a user that names one real user; null when no
+/// such user exists or it is one the kernel uses for an unknown user.
+UserId? _uidOf(String user) {
+  final number =
+      int.tryParse(user) ??
+      switch (Process.runSync('id', ['-u', user])) {
+        final r when r.exitCode == 0 => int.tryParse('${r.stdout}'.trim()),
+        _ => null,
+      };
+  return number == null ? null : UserId.parse(number);
 }
 
 Never _fail(String why) {
