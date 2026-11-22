@@ -72,9 +72,8 @@ hook events.
   message per call and no earlier assistant turns, so the driver flattens
   the turns into one line each, `User: …` or `Agent: …`, joined with `\n`,
   and that text goes to stdin. Each turn's content goes exactly as sent.
-  Anything else that is JSON is refused before `claude` starts. A request
-  that is not JSON at all is taken as already-flattened text and goes as it
-  is, so a loop still sending text keeps working. No turn names a model, so
+  Anything else, JSON or not, is refused before `claude` starts. No turn
+  names a model, so
   `AsksTheModel`'s rule, that a model named in the request must be the
   decided one, holds by construction: only `--model` chooses one.
 - **Nothing trimmed or re-encoded.** A test hands the driver whitespace at
