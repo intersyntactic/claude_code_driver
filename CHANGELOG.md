@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- Docs say "the logbook" where they said "the record": one word for one thing. No code change.
+
 ## 0.4.0
 
 - **Breaking:** `ClaudeCodeDriverService.start` takes the caller as a `UserId` from is_unix_socket_user_check, not an `int`, and an optional `SocketUserReader`. Who may call is decided by `SocketUserCheck`, which denies a peer whose user the kernel does not name; a `UserId` can never be 65534, 4294967294 or `(uid_t)-1`, so none of them can be the configured caller. The service refuses to start on such a caller.

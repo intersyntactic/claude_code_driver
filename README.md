@@ -80,7 +80,7 @@ hook events.
 - **Nothing trimmed or re-encoded.** A test hands the driver whitespace at
   both ends, CRLF, a BOM, a NUL and non-ASCII, and checks that the bytes
   `claude` reads equal `utf8.encode` of each string.
-- **The record holds what was given to `claude -p`**, not the exact wire to
+- **The logbook holds what was given to `claude -p`**, not the exact wire to
   Anthropic: Claude Code may add context of its own.
 - **Streaming.** Each text delta is reported as `ReplyArriving`; the
   `result` event's text is the `ModelReply`: a `CutOffReply` when its
