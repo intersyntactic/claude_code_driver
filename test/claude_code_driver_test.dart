@@ -46,11 +46,11 @@ Map<String, Object?> tokens(int input, int cacheRead, int created, int out) => {
 
 void main() {
   late Directory dir;
-  late Directory record;
+  late Directory notes;
 
   setUp(() async {
     dir = await Directory.systemTemp.createTemp('ccd-test');
-    record = await Directory('${dir.path}/record').create();
+    notes = await Directory('${dir.path}/notes').create();
   });
   tearDown(() => dir.delete(recursive: true));
 
@@ -59,7 +59,7 @@ void main() {
   String fakeClaude(List<String> lines, {int exit = 0, bool hang = false}) {
     final out = File('${dir.path}/out.jsonl')
       ..writeAsStringSync(lines.map((l) => '$l\n').join());
-    final r = record.path;
+    final r = notes.path;
     final script = File('${dir.path}/claude')
       ..writeAsStringSync('''#!/bin/sh
 for a in "\$@"; do printf '%s\\0' "\$a"; done > $r/args
@@ -83,8 +83,7 @@ exit $exit
     return script.path;
   }
 
-  String recorded(String name) =>
-      File('${record.path}/$name').readAsStringSync();
+  String noted(String name) => File('${notes.path}/$name').readAsStringSync();
 
   Future<(Outcome<ModelReply>, List<Progress>)> ask(
     String claude, {
@@ -115,13 +114,10 @@ exit $exit
       request: request,
     );
     expect(
-      File('${record.path}/system-prompt').readAsBytesSync(),
+      File('${notes.path}/system-prompt').readAsBytesSync(),
       utf8.encode(systemPrompt),
     );
-    expect(
-      File('${record.path}/stdin').readAsBytesSync(),
-      utf8.encode(request),
-    );
+    expect(File('${notes.path}/stdin').readAsBytesSync(), utf8.encode(request));
   });
 
   test('flattens an input array into one line per turn', () async {
@@ -135,7 +131,7 @@ exit $exit
       ]),
     );
     expect(
-      File('${record.path}/stdin').readAsBytesSync(),
+      File('${notes.path}/stdin').readAsBytesSync(),
       utf8.encode(
         'User: hey are you there\n'
         'Agent:   yep,\r\nhere “é” \u{1F600} \n'
@@ -170,7 +166,7 @@ exit $exit
       final (outcome, _) = await ask(claude, request: request);
       expect((outcome as Refused).why, 'not a request: $why', reason: request);
     }
-    expect(File('${record.path}/args').existsSync(), isFalse);
+    expect(File('${notes.path}/args').existsSync(), isFalse);
   });
 
   test('streams the reply and gives the whole of it', () async {
@@ -194,7 +190,7 @@ exit $exit
     const request = 'line one\nline two — “quoted” \u{1F600}\n';
     await ask(fakeClaude([init([]), result('ok')]), request: request);
 
-    final args = recorded('args').split('\x00')..removeLast();
+    final args = noted('args').split('\x00')..removeLast();
     expect(args, ClaudeCodeDriver.arguments(haiku));
     expect(args.sublist(0, 4), ['-p', '--tools', '', '--restricted']);
     for (final flag in [
@@ -210,12 +206,12 @@ exit $exit
     expect(args[args.indexOf('--model') + 1], 'claude-haiku-5-5');
     expect(args, isNot(contains('You are Cam.')));
 
-    expect(recorded('stdin'), request);
-    expect(recorded('system-prompt'), 'You are Cam.');
+    expect(noted('stdin'), request);
+    expect(noted('system-prompt'), 'You are Cam.');
 
     final env =
         {
-            for (final line in const LineSplitter().convert(recorded('env')))
+            for (final line in const LineSplitter().convert(noted('env')))
               line.substring(0, line.indexOf('=')): line.substring(
                 line.indexOf('=') + 1,
               ),
@@ -223,15 +219,15 @@ exit $exit
           ..remove('PWD')
           ..remove('SHLVL')
           ..remove('_');
-    final scratch = recorded('scratch').trim();
+    final scratch = noted('scratch').trim();
     expect(env, {
       'PATH': '/usr/bin:/bin',
       'HOME': '$scratch/home',
       'CLAUDE_CONFIG_DIR': '$scratch/config',
       'CLAUDE_CODE_OAUTH_TOKEN': token.token,
     });
-    expect(recorded('cwd').trim(), endsWith('$scratch/work'));
-    expect(recorded('ls'), isEmpty);
+    expect(noted('cwd').trim(), endsWith('$scratch/work'));
+    expect(noted('ls'), isEmpty);
     expect(Directory(scratch).existsSync(), isFalse);
   });
 
@@ -379,7 +375,7 @@ exit $exit
           report: (_) {},
         );
     expect((outcome as Refused).why, 'no model sign-in someone-else');
-    expect(File('${record.path}/args').existsSync(), isFalse);
+    expect(File('${notes.path}/args').existsSync(), isFalse);
   });
 
   test('refuses when claude cannot be started', () async {

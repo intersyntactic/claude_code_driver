@@ -2,8 +2,8 @@ name: is_claude_code_driver
 description: >-
   intersyntactic's Claude Code driver: asks the model through `claude -p`
   under a Claude Code seat, with every built-in tool switched off, holding
-  the seat's token so no loop or record ever sees it.
-version: 0.4.0
+  the seat's token so no loop or logbook ever sees it.
+version: 0.4.1
 repository: https://github.com/intersyntactic/claude_code_driver
 
 environment:

@@ -17,7 +17,7 @@ import 'model_request.dart';
 /// turns, so the turns become lines of one text. No turn names a model, so
 /// the model is only ever the one decided.
 ///
-/// The record holds what was given to `claude -p`, not the exact wire to
+/// The logbook holds what was given to `claude -p`, not the exact wire to
 /// Anthropic: Claude Code may add context of its own.
 final class ClaudeCodeDriver implements AsksTheModel {
   ClaudeCodeDriver(
@@ -42,7 +42,7 @@ final class ClaudeCodeDriver implements AsksTheModel {
   final Duration _limit;
 
   /// Where a failed call's stderr and unreadable lines go: for whoever runs
-  /// the driver, not the record. Never the token.
+  /// the driver, not the logbook. Never the token.
   final void Function(String line) _log;
 
   static void _silent(String _) {}
