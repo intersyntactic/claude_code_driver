@@ -21,10 +21,9 @@ enum TurnRole {
 /// `[{"role":"user","content":"…"},{"role":"assistant","content":"…"}]`.
 /// Claude Code takes one prompt, so each turn becomes one line naming who
 /// said it, `User: …` or `Agent: …`, its content exactly as sent, and the
-/// lines are joined with `\n`. A request that is not JSON at all is such a
-/// text already and goes as it is.
+/// lines are joined with `\n`.
 ///
-/// Throws [FormatException] for JSON that is not a non-empty array of
+/// Throws [FormatException] for anything but a non-empty JSON array of
 /// turns, each exactly a `role` of `user` or `assistant` and a string
 /// `content`. A system turn is refused: the system prompt travels apart.
 String promptFor(String request) {
@@ -32,7 +31,7 @@ String promptFor(String request) {
   try {
     json = jsonDecode(request);
   } on FormatException {
-    return request;
+    throw const FormatException('not JSON');
   }
   if (json is! List<Object?> || json.isEmpty) {
     throw const FormatException('not a non-empty array of turns');

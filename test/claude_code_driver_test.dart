@@ -90,7 +90,7 @@ exit $exit
     Duration limit = const Duration(seconds: 10),
     List<String>? log,
     String systemPrompt = 'You are Cam.',
-    String request = 'hello',
+    String request = '[{"role":"user","content":"hello"}]',
   }) async {
     final reported = <Progress>[];
     final outcome = await ClaudeCodeDriver(
@@ -107,17 +107,22 @@ exit $exit
     // Whitespace at both ends, CRLF, a BOM, a NUL and non-ASCII: anything a
     // trim or re-encode would change.
     const systemPrompt = '﻿\n  You are Cam.\r\n\t\x00 “é” \u{1F600}  \n\n';
-    const request = '  \r\nline\n\n  trailing  \n';
+    const content = '  \r\nline\n\n  trailing  \n';
     await ask(
       fakeClaude([init([]), result('ok')]),
       systemPrompt: systemPrompt,
-      request: request,
+      request: jsonEncode([
+        {'role': 'user', 'content': content},
+      ]),
     );
     expect(
       File('${notes.path}/system-prompt').readAsBytesSync(),
       utf8.encode(systemPrompt),
     );
-    expect(File('${notes.path}/stdin').readAsBytesSync(), utf8.encode(request));
+    expect(
+      File('${notes.path}/stdin').readAsBytesSync(),
+      utf8.encode('User: $content'),
+    );
   });
 
   test('flattens an input array into one line per turn', () async {
@@ -140,9 +145,11 @@ exit $exit
     );
   });
 
-  test('refuses a JSON request that is not an array of turns', () async {
+  test('refuses a request that is not an array of turns', () async {
     final claude = fakeClaude([init([]), result('ok')]);
     for (final (request, why) in [
+      ('User: hi', 'not JSON'),
+      ('', 'not JSON'),
       ('[]', 'not a non-empty array of turns'),
       ('{"role":"user","content":"hi"}', 'not a non-empty array of turns'),
       ('"hi"', 'not a non-empty array of turns'),
@@ -187,8 +194,13 @@ exit $exit
   });
 
   test('runs claude with every tool off, and nothing else of ours', () async {
-    const request = 'line one\nline two — “quoted” \u{1F600}\n';
-    await ask(fakeClaude([init([]), result('ok')]), request: request);
+    const content = 'line one\nline two — “quoted” \u{1F600}\n';
+    await ask(
+      fakeClaude([init([]), result('ok')]),
+      request: jsonEncode([
+        {'role': 'user', 'content': content},
+      ]),
+    );
 
     final args = noted('args').split('\x00')..removeLast();
     expect(args, ClaudeCodeDriver.arguments(haiku));
@@ -206,7 +218,7 @@ exit $exit
     expect(args[args.indexOf('--model') + 1], 'claude-haiku-5-5');
     expect(args, isNot(contains('You are Cam.')));
 
-    expect(noted('stdin'), request);
+    expect(noted('stdin'), 'User: $content');
     expect(noted('system-prompt'), 'You are Cam.');
 
     final env =
