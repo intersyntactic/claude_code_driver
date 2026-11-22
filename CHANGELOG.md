@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+
+- is_effects ^0.13.0. Nothing `AsksTheModel` or the model-call codec uses changed.
+
 ## 0.5.0
 
 - **Breaking:** `request` must be a JSON input array of turns. Text that is not JSON, which 0.2.0 to 0.4.1 passed straight through for the switchover, is refused before `claude` starts with `not a request: not JSON`.
