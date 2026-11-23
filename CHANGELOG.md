@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0
+
+- **Breaking:** one class, `ClaudeCodeDriver`, is the driver and owns its socket: `ClaudeCodeDriver.start(signIns, caller:, socket:, …)` binds and serves, and `close()` stops it. `ClaudeCodeDriverService` is gone, and `ClaudeCodeDriver` no longer implements `AsksTheModel`: the only way to ask it is over the socket.
+- **Breaking:** `package:is_claude_code_driver/service.dart` is gone, with `ClaudeCodeDriverSocket` and `CheckDriver`. The wire is is_effects' codec, the same for every model driver, so the caller belongs to the airlock, not to one driver.
+- The socket protocol is unchanged.
+
 ## 0.5.1
 
 - is_effects ^0.13.0. Nothing `AsksTheModel` or the model-call codec uses changed.
