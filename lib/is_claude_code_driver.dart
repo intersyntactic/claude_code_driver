@@ -3,5 +3,5 @@
 /// logbook ever sees one.
 library;
 
-export 'src/claude_code_driver.dart' show ClaudeCodeDriver;
+export 'src/claude_code_driver.dart' show ClaudeCodeDriver, ClaudeCodeFlags;
 export 'src/credential.dart' show ClaudeCodeSetupToken, Credential;

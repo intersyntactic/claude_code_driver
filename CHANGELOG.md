@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0
+
+- **Breaking:** `ClaudeCodeDriver.start` takes `flags:`, a `ClaudeCodeFlags`: `everyFlag` for Claude Code 2.1.311 and later, `withoutSafeModeOrRestricted` for 2.1.112, its last release in plain JavaScript, which runs on any Node (riscv64 among them). `ClaudeCodeFlags.forVersion` gives the flags for a version, or null for one the driver was not checked against, and the service refuses such a version at start.
+- **Breaking:** `ClaudeCodeDriver.arguments` takes the flags too, and passes `--input-format stream-json`: the request goes to stdin as one stream-json user message (`ClaudeCodeDriver.userMessage`), then stdin closes. Its content is the same flattened text as before.
+- Spares: `spares:` (the service's `CLAUDE_CODE_DRIVER_SPARES`, 0 by default) keeps a `claude` started and waiting for that many combinations of sign-in, model and system prompt, so a call skips Claude Code's startup. A spare is used once, like any call's `claude`; one past `spareLifetime` (30 minutes) or one that exited is ended instead. `close()` ends them all.
+- `claude` runs with `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, which stops 2.1.112 sending each prompt to Haiku 4.5 for a session title.
+- A `system` event other than `init` may come before `init`; 2.1.323 prints `ui_invalidate` there when reading stream-json. Any other event before `init` is still refused.
+
 ## 0.6.2
 
 - is_effects ^0.14.2. 0.14.1 adds `FileRequest` and 0.14.2 moves the web address types into `is_web_address_vocabulary`, which is_effects re-exports; neither touches what the driver uses.

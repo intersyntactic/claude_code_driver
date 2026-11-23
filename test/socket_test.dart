@@ -14,7 +14,12 @@ void main() {
 
   setUp(() async {
     fake = await FakeClaude.create();
-    claude = fake.script([init([]), delta('hel'), delta('lo'), result('hello')]);
+    claude = fake.script([
+      init([]),
+      delta('hel'),
+      delta('lo'),
+      result('hello'),
+    ]);
   });
   tearDown(() => fake.delete());
 
@@ -27,7 +32,7 @@ void main() {
       [for (final p in reported) (p as ReplyArriving).text],
       ['hel', 'lo'],
     );
-    expect(fake.noted('stdin'), 'User: hello');
+    expect(fake.sentPrompt, 'User: hello');
     expect(fake.noted('system-prompt'), 'You are Cam.');
   });
 
