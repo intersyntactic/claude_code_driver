@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+
+- is_effects ^0.14.0. Its one breaking change, splitting `Request` into `ProposedRequest` and `GrantedRequest`, touches nothing the driver uses.
+
 ## 0.6.0
 
 - **Breaking:** one class, `ClaudeCodeDriver`, is the driver and owns its socket: `ClaudeCodeDriver.start(signIns, caller:, socket:, …)` binds and serves, and `close()` stops it. `ClaudeCodeDriverService` is gone, and `ClaudeCodeDriver` no longer implements `AsksTheModel`: the only way to ask it is over the socket.
