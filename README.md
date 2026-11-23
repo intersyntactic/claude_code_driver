@@ -1,8 +1,7 @@
 # is_claude_code_driver
 
-intersyntactic's Claude Code driver: the service that answers a model call
-(the wire of [is_effects](https://github.com/intersyntactic/effects)) by
-running `claude -p` under a Claude Code seat. Agent loops hold no model credential
+intersyntactic's Claude Code driver: a service on a Unix socket that
+answers a model call by running `claude -p` under a Claude Code seat. Agent loops hold no model credential
 and have no network; they propose a call, the airlock decides it, and this
 driver is the only piece that reaches Anthropic.
 
@@ -145,7 +144,3 @@ closes:
 ```
 ← {"kind":"finished","outcome":{"kind":"refused","why":"not a call: modelCall.signIn: not a string"}}
 ```
-
-Both directions are is_effects' wire codec (`encodeModelCall`,
-`encodeProgramMessage`), the same for every model driver, so this package
-holds no caller: the airlock speaks the codec itself.

@@ -19,11 +19,10 @@ import 'model_request.dart';
 ///
 /// The driver answers one JSON line per message and closes: any number of
 /// `{"kind":"reported","progress":…}` while the reply streams, then one
-/// `{"kind":"finished","outcome":…}`, the `Outcome<ModelReply>`. Both are
-/// is_effects' wire codec, so this package holds no caller. Who is calling
-/// is read from the socket as the kernel reports it, never from the call.
-/// It runs as its own user, so a seat's token is readable by this process
-/// and no other.
+/// `{"kind":"finished","outcome":…}`, the `Outcome<ModelReply>`. Who is
+/// calling is read from the socket as the kernel reports it, never from the
+/// call. It runs as its own user, so a seat's token is readable by this
+/// process and no other.
 ///
 /// One call is one text message: its `request`, an input array of turns,
 /// goes to stdin flattened by [promptFor], and its `systemPrompt` to
