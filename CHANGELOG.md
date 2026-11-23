@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2
+
+- is_effects ^0.14.2. 0.14.1 adds `FileRequest` and 0.14.2 moves the web address types into `is_web_address_vocabulary`, which is_effects re-exports; neither touches what the driver uses.
+
 ## 0.6.1
 
 - is_effects ^0.14.0. Its one breaking change, splitting `Request` into `ProposedRequest` and `GrantedRequest`, touches nothing the driver uses.
