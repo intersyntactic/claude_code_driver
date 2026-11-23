@@ -1,5 +1,4 @@
-/// Runs the Claude Code driver as a service (see
-/// `package:is_claude_code_driver/service.dart`):
+/// Runs the Claude Code driver (see `ClaudeCodeDriver`):
 ///
 ///     CLAUDE_CODE_DRIVER_SOCKET=/run/intersyntactic-claude-code-driver/claude-code-driver.sock \
 ///       CLAUDE_CODE_DRIVER_CALLER=airlock \
@@ -19,7 +18,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:is_claude_code_driver/is_claude_code_driver.dart';
-import 'package:is_claude_code_driver/service.dart';
 import 'package:is_effects/is_effects.dart';
 import 'package:is_unix_socket_user_check/is_unix_socket_user_check.dart';
 
@@ -53,12 +51,14 @@ Future<void> main() async {
     _fail('$e');
   }
   if (signIns.isEmpty) _fail('no model sign-ins in $credentials');
-  final ClaudeCodeDriverService service;
+  final ClaudeCodeDriver driver;
   try {
-    service = await ClaudeCodeDriverService.start(
-      ClaudeCodeDriver(signIns, claude: claude, log: stdout.writeln),
-      uid,
-      File(socket),
+    driver = await ClaudeCodeDriver.start(
+      signIns,
+      caller: uid,
+      socket: File(socket),
+      claude: claude,
+      log: stdout.writeln,
     );
   } on Object catch (e) {
     _fail('$e');
@@ -74,7 +74,7 @@ Future<void> main() async {
     });
   }
   await stop.future;
-  await service.close();
+  await driver.close();
   exit(0);
 }
 

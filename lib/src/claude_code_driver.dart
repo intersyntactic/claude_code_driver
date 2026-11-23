@@ -1,17 +1,32 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:is_effects/is_effects.dart';
+import 'package:is_unix_socket_user_check/is_unix_socket_user_check.dart';
 
 import 'credential.dart';
 import 'model_request.dart';
 
-/// [AsksTheModel] by running `claude -p` once per call, signed in as the
-/// seat the call names, with every built-in tool switched off.
+/// The Claude Code driver: a service on a Unix socket that asks the model by
+/// running `claude -p` once per call, signed in as the seat the call names,
+/// with every built-in tool switched off, for the airlock's user alone.
 ///
-/// One call is one text message: [askTheModel]'s `request`, an input array
-/// of turns, goes to stdin flattened by [promptFor], and `systemPrompt` to
+/// A caller connects, writes one call as JSON and closes its side:
+///
+///     {"signIn":"…","model":"…","systemPrompt":"…","request":"…"}
+///
+/// The driver answers one JSON line per message and closes: any number of
+/// `{"kind":"reported","progress":…}` while the reply streams, then one
+/// `{"kind":"finished","outcome":…}`, the `Outcome<ModelReply>`. Both are
+/// is_effects' wire codec, so this package holds no caller. Who is calling
+/// is read from the socket as the kernel reports it, never from the call.
+/// It runs as its own user, so a seat's token is readable by this process
+/// and no other.
+///
+/// One call is one text message: its `request`, an input array of turns,
+/// goes to stdin flattened by [promptFor], and its `systemPrompt` to
 /// `--system-prompt-file` as its UTF-8 bytes; the command line is
 /// [arguments], fixed for a model. Claude Code takes no earlier assistant
 /// turns, so the turns become lines of one text. No turn names a model, so
@@ -19,16 +34,47 @@ import 'model_request.dart';
 ///
 /// The logbook holds what was given to `claude -p`, not the exact wire to
 /// Anthropic: Claude Code may add context of its own.
-final class ClaudeCodeDriver implements AsksTheModel {
-  ClaudeCodeDriver(
+final class ClaudeCodeDriver {
+  ClaudeCodeDriver._(
+    this._signIns,
+    this._claude,
+    this._path,
+    this._limit,
+    this._log,
+    this._socketUserCheck,
+    this._socket,
+    this._server,
+  );
+
+  /// Listens on [socket] for the user [caller] alone, asking the model as
+  /// the seats in [signIns]. [claude] is the `claude` executable, by path or
+  /// by name on [path]; [limit] is how long one call may run;
+  /// [socketUserReader] reads each caller's user from the kernel, the
+  /// running kernel's by default. A socket file nothing listens on is
+  /// replaced.
+  static Future<ClaudeCodeDriver> start(
     Map<ModelSignInName, Credential> signIns, {
-    this._claude = 'claude',
+    required UserId caller,
+    required File socket,
+    String claude = 'claude',
     String? path,
-    this._limit = const Duration(minutes: 10),
+    Duration limit = const Duration(minutes: 10),
     void Function(String line)? log,
-  }) : _signIns = Map.unmodifiable(signIns),
-       _path = path ?? Platform.environment['PATH'] ?? '/usr/bin:/bin',
-       _log = log ?? _silent;
+    SocketUserReader? socketUserReader,
+  }) async {
+    final driver = ClaudeCodeDriver._(
+      Map.unmodifiable(signIns),
+      claude,
+      path ?? Platform.environment['PATH'] ?? '/usr/bin:/bin',
+      limit,
+      log ?? _silent,
+      SocketUserCheck.only(caller, reader: socketUserReader),
+      socket,
+      await _bind(socket),
+    );
+    driver._server.listen(driver._serve);
+    return driver;
+  }
 
   final Map<ModelSignInName, Credential> _signIns;
 
@@ -45,7 +91,89 @@ final class ClaudeCodeDriver implements AsksTheModel {
   /// the driver, not the logbook. Never the token.
   final void Function(String line) _log;
 
+  final SocketUserCheck _socketUserCheck;
+  final File _socket;
+  final ServerSocket _server;
+
   static void _silent(String _) {}
+
+  /// A whole trajectory rendered as text fits well inside this.
+  static const maxCall = 16 << 20;
+
+  static Future<ServerSocket> _bind(File socket) async {
+    final address = InternetAddress(
+      socket.path,
+      type: InternetAddressType.unix,
+    );
+    if (socket.existsSync()) {
+      try {
+        (await Socket.connect(address, 0)).destroy();
+        throw StateError('a service is already listening on ${socket.path}');
+      } on SocketException {
+        socket.deleteSync();
+      }
+    }
+    return ServerSocket.bind(address, 0);
+  }
+
+  Future<void> close() async {
+    await _server.close();
+    if (_socket.existsSync()) _socket.deleteSync();
+  }
+
+  Future<void> _serve(Socket socket) async {
+    try {
+      if (!_socketUserCheck.allows(socket)) {
+        socket.destroy();
+        return;
+      }
+      final bytes = BytesBuilder(copy: false);
+      var tooLarge = false;
+      await for (final chunk in socket) {
+        if (bytes.length + chunk.length > maxCall) {
+          tooLarge = true;
+          break;
+        }
+        bytes.add(chunk);
+      }
+      if (tooLarge) {
+        _write(socket, const Finished(Refused('call too large')));
+        await socket.close();
+        return;
+      }
+      final ModelSignInName signIn;
+      final ModelName model;
+      final String systemPrompt;
+      final String request;
+      try {
+        (signIn, model, systemPrompt, request) = decodeModelCall(
+          jsonDecode(utf8.decode(bytes.takeBytes(), allowMalformed: true)),
+        );
+      } on FormatException catch (e) {
+        _write(socket, Finished(Refused('not a call: ${e.message}')));
+        await socket.close();
+        return;
+      }
+      final outcome = await _ask(
+        signIn,
+        model,
+        systemPrompt,
+        request,
+        report: (progress) => _write(socket, Reported(progress)),
+      );
+      _write(socket, Finished(outcome));
+      await socket.close();
+    } on SocketException {
+      socket.destroy();
+    }
+  }
+
+  static void _write(Socket socket, ProgramMessage<ModelReply> message) =>
+      socket.add(
+        utf8.encode(
+          '${jsonEncode(encodeProgramMessage(message, encodeModelReply))}\n',
+        ),
+      );
 
   /// Every flag is there to take something away. `--tools ""` offers the
   /// model no tool; `--restricted` removes the tools that run code or reach
@@ -79,8 +207,7 @@ final class ClaudeCodeDriver implements AsksTheModel {
     '../system-prompt',
   ];
 
-  @override
-  Future<Outcome<ModelReply>> askTheModel(
+  Future<Outcome<ModelReply>> _ask(
     ModelSignInName signIn,
     ModelName model,
     String systemPrompt,
