@@ -79,7 +79,9 @@ final class FakeClaude {
 for a in "\$@"; do printf '%s\\0' "\$a"; done > $r/args
 env > $r/env
 pwd > $r/cwd
+pwd -P > $r/real-cwd
 ls -A > $r/ls
+cp -R "\$CLAUDE_CONFIG_DIR" $r/config
 prev=
 for a in "\$@"; do
   if [ "\$prev" = --system-prompt-file ]; then
@@ -144,21 +146,54 @@ done
 
   String noted(String name) => File('${notes.path}/$name').readAsStringSync();
 
-  /// The prompt in the one stream-json user message `claude` read.
-  String get sentPrompt =>
+  /// The text of each turn in the one stream-json user message `claude`
+  /// read.
+  List<String> get sentTurns =>
       switch (const LineSplitter().convert(noted('stdin'))) {
         [final line] when noted('stdin').endsWith('\n') => switch (jsonDecode(
           line,
         )) {
           {
             'type': 'user',
-            'message': {'role': 'user', 'content': final String content},
+            'message': {'role': 'user', 'content': final List<Object?> blocks},
           } =>
-            content,
+            [
+              for (final block in blocks)
+                switch (block) {
+                  {'type': 'text', 'text': final String text}
+                      when block.length == 2 =>
+                    text,
+                  _ => throw StateError('not a text block: $block'),
+                },
+            ],
           final other => throw StateError('not a user message: $other'),
         },
         final lines => throw StateError('not one line: $lines'),
       };
+
+  /// The session `claude` was told to resume, or null.
+  String? get resumed {
+    final args = noted('args').split('\x00')..removeLast();
+    final at = args.indexOf('--resume');
+    return at < 0 ? null : args[at + 1];
+  }
+
+  /// The entries of the transcript `claude` was told to resume, each
+  /// decoded, from where Claude Code looks for it: its config's projects,
+  /// in the folder named for its working directory's real path.
+  List<Map<String, Object?>> get planted {
+    final project = noted('real-cwd')
+        .trim()
+        .replaceAll(RegExp('[^A-Za-z0-9]'), '-');
+    final file = File('${notes.path}/config/projects/$project/$resumed.jsonl');
+    return [
+      for (final line in file.readAsLinesSync())
+        switch (jsonDecode(line)) {
+          final Map<String, Object?> entry => entry,
+          final other => throw StateError('not an entry: $other'),
+        },
+    ];
+  }
 
   /// Whether `claude` was started at all.
   bool get ran => File('${notes.path}/args').existsSync();

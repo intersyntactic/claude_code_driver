@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:is_effects/is_effects.dart';
@@ -24,12 +25,14 @@ import 'model_request.dart';
 /// call. It runs as its own user, so a seat's token is readable by this
 /// process and no other.
 ///
-/// One call is one user message: its `request`, an input array of turns,
-/// is flattened by [promptFor] and goes to stdin as [userMessage], and its
-/// `systemPrompt` to `--system-prompt-file` as its UTF-8 bytes; the command
-/// line is [arguments], fixed for a model. Claude Code takes no earlier
-/// assistant turns, so the turns become lines of one text. No turn names a
-/// model, so the model is only ever the one decided.
+/// One call is one model turn. Its `request`, an input array of turns, is
+/// split by [splitAtLastReply]: the turns up to the last assistant turn are
+/// written as a session [transcript] that `claude` resumes, so the model
+/// reads them as real user and assistant turns, and the user turns after it
+/// go to stdin as one [userMessage]. Its `systemPrompt` goes to
+/// `--system-prompt-file` as its UTF-8 bytes; the command line is
+/// [arguments]. No turn names a model, so the model is only ever the one
+/// decided.
 ///
 /// The logbook holds what was given to `claude -p`, not the exact wire to
 /// Anthropic: Claude Code may add context of its own.
@@ -60,9 +63,10 @@ final class ClaudeCodeDriver {
   ///
   /// [spares] is how many combinations of sign-in, model and system prompt
   /// are kept warm: after a call, a `claude` for the same three is started
-  /// and left waiting, so the next such call skips Claude Code's startup.
-  /// None by default. A spare older than [spareLifetime] by [clock], or one
-  /// that has exited, is replaced instead of used.
+  /// and left waiting, so the next such call with no earlier reply skips
+  /// Claude Code's startup; one with earlier turns must start `claude` on
+  /// them. None by default. A spare older than [spareLifetime] by [clock],
+  /// or one that has exited, is replaced instead of used.
   ///
   /// [liveSessions] is how many `claude`s are kept running after a call
   /// they finished, so the next step of the same trajectory is written into
@@ -248,10 +252,15 @@ final class ClaudeCodeDriver {
   ///
   /// The request goes in as one stream-json user message: a text prompt is
   /// abandoned when stdin stays empty for 3 s, which a spare's does.
+  /// [resume] names the session transcript holding the earlier turns.
   ///
-  /// The same for every call to [model]: the system prompt is named by a
-  /// path relative to the working directory, which claude resolves there.
-  static List<String> arguments(ModelName model, ClaudeCodeFlags flags) => [
+  /// The system prompt is named by a path relative to the working
+  /// directory, which claude resolves there.
+  static List<String> arguments(
+    ModelName model,
+    ClaudeCodeFlags flags, {
+    String? resume,
+  }) => [
     '-p',
     '--tools',
     '',
@@ -271,20 +280,13 @@ final class ClaudeCodeDriver {
     model.value,
     '--system-prompt-file',
     '../system-prompt',
+    if (resume != null) ...['--resume', resume],
   ];
 
-  /// The one line written to claude's stdin for [prompt]: a stream-json
-  /// user message whose content is [prompt] exactly.
-  static String userMessage(String prompt) =>
-      '${jsonEncode({
-        'type': 'user',
-        'message': {'role': 'user', 'content': prompt},
-      })}\n';
-
-  /// The one line written to a live session for the user [turns] that
-  /// follow its last reply: one user message, one text block per turn,
+  /// The one line written to claude's stdin for the user [turns] that follow
+  /// the last reply: one stream-json user message, one text block per turn,
   /// each exactly as sent, so the model answers once.
-  static String continuation(List<String> turns) =>
+  static String userMessage(List<String> turns) =>
       '${jsonEncode({
         'type': 'user',
         'message': {
@@ -311,21 +313,30 @@ final class ClaudeCodeDriver {
       return Refused('not a request: ${e.message}');
     }
 
+    final split = splitAtLastReply(turns);
+    if (split == null) return const Refused('a request ends with a user turn');
+
     final key = (signIn, model, systemPrompt);
     final call = '$signIn $model';
     final _Claude claude;
     final String message;
     if (_continuable(key, turns) case (final session, final added)) {
       claude = session;
-      message = continuation(added);
+      message = userMessage(added);
     } else {
+      final (:history, :added) = split;
       try {
-        claude = _takeSpare(key) ?? await _startClaude(key, credential);
+        // A spare started on no turns, so it serves only a call with none.
+        claude = history.isEmpty
+            ? _takeSpare(key) ?? await _startClaude(key, credential)
+            : await _startClaude(key, credential, history: history);
       } on ProcessException catch (e) {
         return Refused('claude did not start: ${e.message}');
       }
-      if (_spares > 0) unawaited(_keepSpare(key, credential));
-      message = userMessage(flatten(turns));
+      if (_spares > 0 && (history.isEmpty || !_waiting.containsKey(key))) {
+        unawaited(_keepSpare(key, credential));
+      }
+      message = userMessage(added);
     }
 
     final outcome = await _converse(claude, message, report, model, call);
@@ -416,11 +427,16 @@ final class ClaudeCodeDriver {
   }
 
   /// Starts `claude` for [key]'s model and system prompt, signed in with
-  /// [credential], waiting for a message on stdin.
+  /// [credential], holding [history] as earlier turns, waiting for a message
+  /// on stdin.
   ///
   /// A fresh home and config per `claude`, so no login, transcript or
   /// setting outlives it or is shared between concurrent calls.
-  Future<_Claude> _startClaude(_SpareKey key, Credential credential) async {
+  Future<_Claude> _startClaude(
+    _SpareKey key,
+    Credential credential, {
+    List<Turn> history = const [],
+  }) async {
     final (_, model, systemPrompt) = key;
     final scratch = await Directory.systemTemp.createTemp('claude-code-call');
     var started = false;
@@ -433,9 +449,27 @@ final class ClaudeCodeDriver {
       // arguments' `../system-prompt` finds it.
       await File('${scratch.path}/system-prompt')
           .writeAsString(systemPrompt, flush: true);
+      final String? session;
+      if (history.isEmpty) {
+        session = null;
+      } else {
+        session = _sessionId();
+        // Where claude looks for a session of its working directory: under
+        // its config, in a folder named for the directory's real path.
+        final project = (await work.resolveSymbolicLinks()).replaceAll(
+          RegExp('[^A-Za-z0-9]'),
+          '-',
+        );
+        final file = File('${config.path}/projects/$project/$session.jsonl');
+        await file.parent.create(recursive: true);
+        await file.writeAsString(
+          transcript(history, session: session, at: _clock()),
+          flush: true,
+        );
+      }
       final process = await Process.start(
         _claude,
-        arguments(model, _flags),
+        arguments(model, _flags, resume: session),
         workingDirectory: work.path,
         environment: {
           'PATH': _path,
@@ -554,6 +588,18 @@ final class ClaudeCodeDriver {
 
   static String _clip(String s) =>
       s.length <= 2000 ? s : '${s.substring(0, 2000)}…';
+
+  /// A random version 4 UUID, the form Claude Code's `--resume` takes.
+  static String _sessionId() {
+    final random = Random.secure();
+    final b = [for (var i = 0; i < 16; i++) random.nextInt(256)];
+    b[6] = b[6] & 0x0f | 0x40;
+    b[8] = b[8] & 0x3f | 0x80;
+    final hex = [for (final byte in b) byte.toRadixString(16).padLeft(2, '0')]
+        .join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
+        '${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
+  }
 }
 
 /// Which spares and sessions a call can use: they share its sign-in, model

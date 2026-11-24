@@ -48,6 +48,26 @@ void main() {
     expect(next.pid, isNot(first.pid));
   });
 
+  test('a call with earlier turns starts its own claude and leaves the '
+      'spare waiting', () async {
+    final driver = await fake.start(claude, spares: 1);
+    addTearDown(driver.close);
+    await expectAnswered();
+    final first = await spare();
+
+    final (outcome, _) = await call(
+      fake.socket,
+      request:
+          '[{"role":"user","content":"hi"},{"role":"assistant","content":"ok"},'
+          '{"role":"user","content":"more"}]',
+    );
+    expect((outcome as Ran<ModelReply>).output.text, 'ok');
+    expect(fake.reads.last, isNot(first.pid));
+    expect(fake.resumed, isNotNull);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(fake.waiting.map((s) => s.pid), [first.pid]);
+  });
+
   test('a spare serves only its own sign-in, model and prompt', () async {
     final driver = await fake.start(claude, spares: 2);
     addTearDown(driver.close);

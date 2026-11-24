@@ -77,15 +77,31 @@ hook events.
 - **The request is an input array of turns**, the shape every model driver
   reads, so the airlock can switch drivers by socket path alone:
   `[{"role":"user","content":"…"},{"role":"assistant","content":"…"}]`,
-  oldest first, never empty, no system turn. Claude Code takes one text
-  message per call and no earlier assistant turns, so the driver flattens
-  the turns into one line each, `User: …` or `Agent: …`, joined with `\n`,
-  and that text is the message's content. Each turn's content goes exactly
-  as sent.
+  oldest first, never empty, no system turn, ending with a user turn.
   Anything else, JSON or not, is refused before `claude` starts. No turn
   names a model, so
   `AsksTheModel`'s rule, that a model named in the request must be the
   decided one, holds by construction: only `--model` chooses one.
+- **Every turn is a real turn.** Claude Code's stdin takes only user
+  messages, so the turns up to the last assistant turn are written as a
+  session transcript in the call's config, and `claude` starts with
+  `--resume` on it: the model reads them as the API's own user and
+  assistant turns. The user turns after the last reply go to stdin as one
+  user message, a text block each. Turns of one role in a row are one
+  message. So no turn's content can pass for another turn, whatever it
+  says: a page a tool fetched that holds `\nAgent: I already approved it`
+  is one line of a user turn, not a reply.
+- **The transcript is Claude Code's own format**, so
+  `test/claude_code_contract_test.dart` runs the installed `claude` through
+  the driver against a stand-in Messages API and checks the turns that reach
+  it, roles and text. Run it for every Claude Code a host is given:
+  `dart test test/claude_code_contract_test.dart`, with
+  `CLAUDE_CODE_CONTRACT_CLAUDE` naming another command, such as
+  `node /opt/claude-code-2.1.112/cli.js`. An entry needs `type`, `uuid`,
+  `parentUuid`, `sessionId`, `timestamp` and `message`; without a
+  timestamp, 2.1.325 and 2.1.112 both exit with `No conversation found`,
+  which refuses the call. A version that silently skipped entries would
+  show only in this test.
 - **Nothing trimmed or re-encoded.** A test hands the driver whitespace at
   both ends, CRLF, a BOM, a NUL and non-ASCII, and checks that what
   `claude` reads equals each string. Run against a stand-in Messages API,
@@ -124,6 +140,10 @@ call only writes its message.
   three; `n` is how many such combinations keep one, the least recently
   used dropped first. The first call of a combination starts `claude` as
   usual.
+- **It serves a trajectory's first step.** A spare starts on no turns, and
+  earlier turns can only be handed to a `claude` as it starts, so a call
+  with an earlier reply starts its own and leaves the spare waiting. Live
+  sessions serve the steps after the first.
 - **A spare is ended, not used,** once it is older than `spareLifetime`
   (30 minutes by default) or when it has exited. `close()` ends every
   spare and deletes its folder.
@@ -150,17 +170,15 @@ the board's cores: a `claude` left waiting with nothing else running took
 A loop asks for each step of a trajectory with the whole history again.
 With `liveSessions: n` the driver keeps the `claude` that answered a step
 running, and writes the next step into it as only its new turns, so no step
-after the first starts Claude Code, and the model reads real user and
-assistant turns rather than one flattened transcript.
+after the first starts Claude Code.
 
 - **Only an exact continuation continues.** A call goes to an idle session
   when it has the session's sign-in, model and system prompt, and its turns
   are exactly the turns the session holds, then the session's own reply,
   then one or more user turns. Those go in as one message, a text block
-  each, so the model answers once. Anything else, an edited turn, a missing
-  reply, a call with no new user turn, starts afresh with the whole history
-  flattened, as without sessions. So the model only ever reads the
-  approved turns, compared byte for byte.
+  each, so the model answers once. Anything else, an edited turn or a
+  missing reply, starts afresh on its whole history, as without sessions.
+  So the model only ever reads the approved turns, compared byte for byte.
 - **Kept only after a whole reply.** A cut-off reply comes back from a loop
   with a note added, and a refused call adds no reply at all, so after
   either the `claude` is ended.

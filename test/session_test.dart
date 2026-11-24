@@ -53,8 +53,8 @@ void main() {
     expect(fake.reads, [pid, pid]);
     expect(fake.starts, hasLength(1));
     expect(fake.messagesTo(pid), [
-      jsonDecode(ClaudeCodeDriver.userMessage('User: task')),
-      jsonDecode(ClaudeCodeDriver.continuation(['more'])),
+      jsonDecode(ClaudeCodeDriver.userMessage(['task'])),
+      jsonDecode(ClaudeCodeDriver.userMessage(['more'])),
     ]);
   });
 
@@ -74,7 +74,7 @@ void main() {
     );
     expect(
       fake.messagesTo(pid).last,
-      jsonDecode(ClaudeCodeDriver.continuation(['one', '  two\r\n'])),
+      jsonDecode(ClaudeCodeDriver.userMessage(['one', '  two\r\n'])),
     );
   });
 
@@ -93,7 +93,6 @@ void main() {
         [('user', 'task!'), ('assistant', reply), ('user', 'm')],
       ),
       ('no reply', [('user', 'task'), ('user', 'm')]),
-      ('no new turn', [('user', 'task'), ('assistant', reply)]),
       (
         'not only users after',
         [
@@ -111,16 +110,23 @@ void main() {
       expect(
         fake.messagesTo(pid).single,
         jsonDecode(
-          ClaudeCodeDriver.userMessage(
-            [
-              for (final (role, content) in turns)
-                '${role == 'user' ? 'User' : 'Agent'}: $content',
-            ].join('\n'),
-          ),
+          ClaudeCodeDriver.userMessage([
+            for (final (role, content) in turns.sublist(
+              turns.lastIndexWhere((t) => t.$1 == 'assistant') + 1,
+            ))
+              if (role == 'user') content,
+          ]),
         ),
         reason: why,
       );
     }
+
+    final started = fake.starts.length;
+    expect(
+      await ask([('user', 'task'), ('assistant', reply)]),
+      'refused: a request ends with a user turn',
+    );
+    expect(fake.starts, hasLength(started));
   });
 
   test('a session serves only its own system prompt', () async {
