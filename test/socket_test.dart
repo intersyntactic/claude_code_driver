@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:is_claude_code_driver/is_claude_code_driver.dart';
@@ -92,34 +93,51 @@ void main() {
   test('allows only the caller as the kernel reports each peer', () async {
     final caller = UserId.parse(1001)!;
     // What Linux's SO_PEERCRED writes: pid, uid, gid, 32 bits each.
+    // A null uid is a short answer; -1 is the kernel refusing the read.
     SocketUserReader peerIs(int? uid) => SocketUserReader(
       kernel: Kernel.linux,
-      readOption: (_, _) => uid == null
-          ? Uint8List(4)
-          : (ByteData(12)
-                  ..setUint32(0, 42, Endian.host)
-                  ..setUint32(4, uid, Endian.host)
-                  ..setUint32(8, uid, Endian.host))
-                .buffer
-                .asUint8List(),
+      readOption: (_, _) => switch (uid) {
+        null => Uint8List(4),
+        -1 => throw const SocketException(
+          'getsockopt failed',
+          osError: OSError('Bad file descriptor', 9),
+        ),
+        final uid =>
+          (ByteData(12)
+                ..setUint32(0, 42, Endian.host)
+                ..setUint32(4, uid, Endian.host)
+                ..setUint32(8, uid, Endian.host))
+              .buffer
+              .asUint8List(),
+      },
       overflowUid: () => 65534,
     );
-    for (final (uid, asked) in [
-      (1001, true),
-      (1002, false),
-      (65534, false),
-      (4294967295, false),
-      (null, false),
+    for (final (uid, asked, logged) in [
+      (1001, true, null),
+      (1002, false, 'not allowed: user 1002 is not one of {1001}'),
+      (65534, false, 'unread: the kernel reported the overflow uid 65534'),
+      (4294967295, false, 'unread: the kernel reported uid 4294967295'),
+      (null, false, 'unread: the kernel answered 4 bytes of a 12-byte'),
+      (-1, false, 'errno = 9'),
     ]) {
+      final log = <String>[];
       final driver = await fake.start(
         claude,
         caller: caller,
         socketUserReader: peerIs(uid),
+        log: log,
       );
       final (outcome, _) = await call(fake.socket);
       await driver.close();
       expect(outcome is Ran<ModelReply>, asked, reason: 'peer $uid');
       expect(fake.ran, asked, reason: 'peer $uid');
+      expect(
+        log,
+        logged == null
+            ? isEmpty
+            : [allOf(startsWith('refused a peer: '), contains(logged))],
+        reason: 'peer $uid',
+      );
       if (fake.ran) fake.notes.listSync().forEach((f) => f.deleteSync());
     }
   });

@@ -147,8 +147,8 @@ final class ClaudeCodeDriver {
   /// How long one call may run before it is killed.
   final Duration _limit;
 
-  /// Where a failed call's stderr and unreadable lines go: for whoever runs
-  /// the driver, not the logbook. Never the token.
+  /// Where a failed call's stderr, unreadable lines and refused peers go:
+  /// for whoever runs the driver, not the logbook. Never the token.
   final void Function(String line) _log;
 
   final SocketUserCheck _socketUserCheck;
@@ -190,9 +190,13 @@ final class ClaudeCodeDriver {
 
   Future<void> _serve(Socket socket) async {
     try {
-      if (!_socketUserCheck.allows(socket)) {
-        socket.destroy();
-        return;
+      switch (_socketUserCheck.decide(socket)) {
+        case Allowed():
+          break;
+        case final refused && (NotAllowed() || Unread()):
+          _log('refused a peer: $refused');
+          socket.destroy();
+          return;
       }
       final bytes = BytesBuilder(copy: false);
       var tooLarge = false;
