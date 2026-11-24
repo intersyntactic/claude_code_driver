@@ -167,6 +167,7 @@ void main() {
       'HOME': '$scratch/home',
       'CLAUDE_CONFIG_DIR': '$scratch/config',
       'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1',
+      'DISABLE_AUTO_COMPACT': '1',
       'CLAUDE_CODE_OAUTH_TOKEN': token.token,
     });
     expect(fake.noted('cwd').trim(), endsWith('$scratch/work'));

@@ -42,6 +42,8 @@ final class ClaudeCodeDriver {
     this._limit,
     this._spares,
     this._spareLifetime,
+    this._liveSessions,
+    this._sessionLifetime,
     this._clock,
     this._log,
     this._socketUserCheck,
@@ -61,6 +63,13 @@ final class ClaudeCodeDriver {
   /// and left waiting, so the next such call skips Claude Code's startup.
   /// None by default. A spare older than [spareLifetime] by [clock], or one
   /// that has exited, is replaced instead of used.
+  ///
+  /// [liveSessions] is how many `claude`s are kept running after a call
+  /// they finished, so the next step of the same trajectory is written into
+  /// one as only its new turns: when that call's turns are exactly the
+  /// ones the session holds, its reply, and one or more new user turns.
+  /// Any other call starts afresh. None by default, so each call is a
+  /// `claude` of its own. A session idle for [sessionLifetime] is ended.
   static Future<ClaudeCodeDriver> start(
     Map<ModelSignInName, Credential> signIns, {
     required UserId caller,
@@ -71,11 +80,16 @@ final class ClaudeCodeDriver {
     Duration limit = const Duration(minutes: 10),
     int spares = 0,
     Duration spareLifetime = const Duration(minutes: 30),
+    int liveSessions = 0,
+    Duration sessionLifetime = const Duration(minutes: 30),
     DateTime Function() clock = DateTime.now,
     void Function(String line)? log,
     SocketUserReader? socketUserReader,
   }) async {
     if (spares < 0) throw ArgumentError.value(spares, 'spares', 'negative');
+    if (liveSessions < 0) {
+      throw ArgumentError.value(liveSessions, 'liveSessions', 'negative');
+    }
     final driver = ClaudeCodeDriver._(
       Map.unmodifiable(signIns),
       claude,
@@ -84,6 +98,8 @@ final class ClaudeCodeDriver {
       limit,
       spares,
       spareLifetime,
+      liveSessions,
+      sessionLifetime,
       clock,
       log ?? _silent,
       SocketUserCheck.only(caller, reader: socketUserReader),
@@ -110,6 +126,14 @@ final class ClaudeCodeDriver {
 
   /// The waiting spares, least recently used first.
   final _waiting = <_SpareKey, _Claude>{};
+
+  /// How many idle `claude`s are kept for their trajectory's next step, and
+  /// how long one may wait for it.
+  final int _liveSessions;
+  final Duration _sessionLifetime;
+
+  /// The idle sessions, least recently used first.
+  final _idle = <_Claude>[];
 
   var _closed = false;
 
@@ -148,14 +172,16 @@ final class ClaudeCodeDriver {
     return ServerSocket.bind(address, 0);
   }
 
-  /// Stops listening and ends every spare, deleting its folder.
+  /// Stops listening and ends every spare and idle session, deleting its
+  /// folder. A call still running ends its `claude` when it finishes.
   Future<void> close() async {
     _closed = true;
     await _server.close();
     if (_socket.existsSync()) _socket.deleteSync();
-    final spares = [..._waiting.values];
+    final ending = [..._waiting.values, ..._idle];
     _waiting.clear();
-    await Future.wait([for (final spare in spares) spare.end()]);
+    _idle.clear();
+    await Future.wait([for (final claude in ending) claude.end()]);
   }
 
   Future<void> _serve(Socket socket) async {
@@ -255,6 +281,20 @@ final class ClaudeCodeDriver {
         'message': {'role': 'user', 'content': prompt},
       })}\n';
 
+  /// The one line written to a live session for the user [turns] that
+  /// follow its last reply: one user message, one text block per turn,
+  /// each exactly as sent, so the model answers once.
+  static String continuation(List<String> turns) =>
+      '${jsonEncode({
+        'type': 'user',
+        'message': {
+          'role': 'user',
+          'content': [
+            for (final turn in turns) {'type': 'text', 'text': turn},
+          ],
+        },
+      })}\n';
+
   Future<Outcome<ModelReply>> _ask(
     ModelSignInName signIn,
     ModelName model,
@@ -264,34 +304,75 @@ final class ClaudeCodeDriver {
   }) async {
     final credential = _signIns[signIn];
     if (credential == null) return Refused('no model sign-in $signIn');
-    final String prompt;
+    final List<Turn> turns;
     try {
-      prompt = promptFor(request);
+      turns = turnsOf(request);
     } on FormatException catch (e) {
       return Refused('not a request: ${e.message}');
     }
 
     final key = (signIn, model, systemPrompt);
+    final call = '$signIn $model';
     final _Claude claude;
-    try {
-      claude =
-          _takeSpare(key) ??
-          await _startClaude(credential, model, systemPrompt);
-    } on ProcessException catch (e) {
-      return Refused('claude did not start: ${e.message}');
+    final String message;
+    if (_continuable(key, turns) case (final session, final added)) {
+      claude = session;
+      message = continuation(added);
+    } else {
+      try {
+        claude = _takeSpare(key) ?? await _startClaude(key, credential);
+      } on ProcessException catch (e) {
+        return Refused('claude did not start: ${e.message}');
+      }
+      if (_spares > 0) unawaited(_keepSpare(key, credential));
+      message = userMessage(flatten(turns));
     }
-    if (_spares > 0) unawaited(_keepSpare(key, credential));
-    try {
-      return await _run(
-        claude.process,
-        userMessage(prompt),
-        report,
-        model,
-        '$signIn $model',
-      );
-    } finally {
-      await claude.scratch.delete(recursive: true);
+
+    final outcome = await _converse(claude, message, report, model, call);
+    // Kept only after a whole reply, which a trajectory's next call repeats
+    // as its assistant turn; a cut-off one it repeats with a note added.
+    if (outcome case Ran<ModelReply>(output: FinishedReply(:final text))
+        when _liveSessions > 0 && !_closed && !claude.hasExited) {
+      claude.turns = [...turns, (role: TurnRole.assistant, content: text)];
+      claude.idleSince = _clock();
+      _idle.add(claude);
+      while (_idle.length > _liveSessions) {
+        unawaited(_idle.removeAt(0).end());
+      }
+      return outcome;
     }
+    final exitCode = await claude.finish();
+    if (outcome is! Ran<ModelReply> || exitCode != 0) {
+      _log('$call: claude exited $exitCode: ${_clip(claude.stderr)}');
+    }
+    return outcome ?? Refused('claude exited $exitCode without a result');
+  }
+
+  /// The idle session [turns] continue, taken from the idle ones, with the
+  /// content of the user turns it has not seen; null when none does. A
+  /// session continues only a call for its [key] whose turns begin with
+  /// exactly the turns it holds, its reply among them, and go on with
+  /// nothing but user turns. Sessions past their lifetime, or that exited,
+  /// are ended on the way.
+  (_Claude, List<String>)? _continuable(_SpareKey key, List<Turn> turns) {
+    final now = _clock();
+    for (final session in [..._idle]) {
+      final stale = !now.isBefore(session.idleSince.add(_sessionLifetime));
+      if (session.hasExited || stale) {
+        _idle.remove(session);
+        unawaited(session.end());
+      }
+    }
+    for (final session in _idle.reversed) {
+      final held = session.turns;
+      if (session.key != key || !_begins(turns, held)) continue;
+      final added = turns.sublist(held.length);
+      if (added.isEmpty) continue;
+      if (added.any((turn) => turn.role != TurnRole.user)) continue;
+      _idle.remove(session);
+      return (session, [for (final turn in added) turn.content]);
+    }
+    return null;
   }
 
   /// The waiting spare for [key] if it can still be used, taking it from
@@ -305,13 +386,22 @@ final class ClaudeCodeDriver {
     return null;
   }
 
+  /// Whether [turns] begins with exactly [held], role and content.
+  static bool _begins(List<Turn> turns, List<Turn> held) {
+    if (turns.length < held.length) return false;
+    for (var i = 0; i < held.length; i++) {
+      if (turns[i] != held[i]) return false;
+    }
+    return true;
+  }
+
   /// Starts a spare for [key] and leaves it waiting, ending the one it
   /// replaces and the least recently used beyond [_spares].
   Future<void> _keepSpare(_SpareKey key, Credential credential) async {
-    final (signIn, model, systemPrompt) = key;
+    final (signIn, model, _) = key;
     final _Claude spare;
     try {
-      spare = await _startClaude(credential, model, systemPrompt);
+      spare = await _startClaude(key, credential);
     } on ProcessException catch (e) {
       _log('$signIn $model: no spare: claude did not start: ${e.message}');
       return;
@@ -325,16 +415,13 @@ final class ClaudeCodeDriver {
     await Future.wait([for (final old in ending) old.end()]);
   }
 
-  /// Starts `claude` for [model] and [systemPrompt], signed in with
-  /// [credential], waiting for its one message on stdin.
+  /// Starts `claude` for [key]'s model and system prompt, signed in with
+  /// [credential], waiting for a message on stdin.
   ///
   /// A fresh home and config per `claude`, so no login, transcript or
-  /// setting outlives a call or is shared between concurrent calls.
-  Future<_Claude> _startClaude(
-    Credential credential,
-    ModelName model,
-    String systemPrompt,
-  ) async {
+  /// setting outlives it or is shared between concurrent calls.
+  Future<_Claude> _startClaude(_SpareKey key, Credential credential) async {
+    final (_, model, systemPrompt) = key;
     final scratch = await Directory.systemTemp.createTemp('claude-code-call');
     var started = false;
     try {
@@ -358,6 +445,9 @@ final class ClaudeCodeDriver {
           // request for a session title, which carries the prompt to
           // another model.
           'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1',
+          // A full context is refused rather than summarised: a summary
+          // would stand in for the approved turns without saying so.
+          'DISABLE_AUTO_COMPACT': '1',
           ...switch (credential) {
             ClaudeCodeSetupToken(:final token) => {
               'CLAUDE_CODE_OAUTH_TOKEN': token,
@@ -367,78 +457,68 @@ final class ClaudeCodeDriver {
         includeParentEnvironment: false,
       );
       started = true;
-      return _Claude(process, scratch, _clock());
+      return _Claude(process, scratch, key, _clock());
     } finally {
       if (!started) await scratch.delete(recursive: true);
     }
   }
 
-  Future<Outcome<ModelReply>> _run(
-    Process process,
+  /// Writes [message] to [claude] and reads its events until the call is
+  /// settled: the outcome, or null when claude's output ended first. With no
+  /// live sessions, stdin closes after the message, its only one.
+  Future<Outcome<ModelReply>?> _converse(
+    _Claude claude,
     String message,
     Report report,
     ModelName model,
     String call,
   ) async {
-    final stderr = StringBuffer();
-    final stderrDone = process.stderr
-        .transform(utf8.decoder)
-        .forEach((s) => stderr.write(s));
-    process.stdin.add(utf8.encode(message));
-    // claude may exit before reading all of stdin; that is its outcome to
-    // report, not a failure of the write.
-    unawaited(process.stdin.close().catchError((Object _) {}));
-
-    Outcome<ModelReply>? outcome;
-    var initialised = false;
-    final lines = process.stdout
-        .transform(utf8.decoder)
-        .transform(const LineSplitter());
-    final reading = () async {
-      await for (final line in lines) {
-        switch (ClaudeEvent.parse(line, model: model)) {
-          case Initialised(:final tools) when tools.isNotEmpty:
-            // The last wall: if the flags ever stop taking every tool away,
-            // no model turn runs.
-            process.kill(ProcessSignal.sigkill);
-            return Refused('claude offered tools: ${tools.join(' ')}');
-          case Initialised():
-            initialised = true;
-          case Unreadable():
-            _log('$call: unreadable line: ${_clip(line)}');
-          case Notice():
-            break;
-          case _ when !initialised:
-            process.kill(ProcessSignal.sigkill);
-            return const Refused('claude did not say which tools it offers');
-          case TextArriving(:final text):
-            report(ReplyArriving(text));
-          case Answered(:final reply):
-            outcome = Ran(reply);
-          case Unanswered(:final why):
-            outcome = Refused('claude: $why');
-          case Other():
-            break;
-        }
-      }
-      return null;
-    }();
-
-    final Outcome<ModelReply>? early;
-    final int exitCode;
-    try {
-      early = await reading.timeout(_limit);
-      exitCode = await process.exitCode;
-    } on TimeoutException {
-      process.kill(ProcessSignal.sigkill);
-      await process.exitCode;
-      return Refused('timed out after ${_limit.inSeconds}s');
+    final settled = Completer<Outcome<ModelReply>?>();
+    void settle(Outcome<ModelReply>? outcome) {
+      if (!settled.isCompleted) settled.complete(outcome);
     }
-    await stderrDone;
-    final result = early ?? outcome;
-    if (result is Ran<ModelReply> && exitCode == 0) return result;
-    _log('$call: claude exited $exitCode: ${_clip(stderr.toString())}');
-    return result ?? Refused('claude exited $exitCode without a result');
+
+    void refuse(String why) {
+      claude.kill();
+      settle(Refused(why));
+    }
+
+    claude.listen((line) {
+      if (settled.isCompleted) return;
+      switch (ClaudeEvent.parse(line, model: model)) {
+        case Initialised(:final tools) when tools.isNotEmpty:
+          // The last wall: if the flags ever stop taking every tool away,
+          // no model turn runs.
+          refuse('claude offered tools: ${tools.join(' ')}');
+        case Initialised():
+          claude.initialised = true;
+        case Unreadable():
+          _log('$call: unreadable line: ${_clip(line)}');
+        case Compacted():
+          refuse('claude summarised the conversation in place of its turns');
+        case Notice():
+          break;
+        case _ when !claude.initialised:
+          refuse('claude did not say which tools it offers');
+        case TextArriving(:final text):
+          report(ReplyArriving(text));
+        case Answered(:final reply):
+          settle(Ran(reply));
+        case Unanswered(:final why):
+          settle(Refused('claude: $why'));
+        case Other():
+          break;
+      }
+    }, ended: () => settle(null));
+    claude.write(message, last: _liveSessions == 0);
+    try {
+      return await settled.future.timeout(_limit);
+    } on TimeoutException {
+      claude.kill();
+      return Refused('timed out after ${_limit.inSeconds}s');
+    } finally {
+      claude.unlisten();
+    }
   }
 
   /// The version `claude --version` reports, such as `2.1.326`, or null
@@ -476,30 +556,105 @@ final class ClaudeCodeDriver {
       s.length <= 2000 ? s : '${s.substring(0, 2000)}…';
 }
 
-/// Which spares a call can use: they share its sign-in, model and system
-/// prompt, all three fixed when `claude` starts.
+/// Which spares and sessions a call can use: they share its sign-in, model
+/// and system prompt, all three fixed when `claude` starts.
 typedef _SpareKey = (ModelSignInName, ModelName, String);
 
-/// A started `claude` and the folder it runs in.
+/// A started `claude` and the folder it runs in: a spare until a call
+/// takes it, then that call's, and after it a live session if kept.
 final class _Claude {
-  _Claude(this.process, this.scratch, this.started) {
+  _Claude(this.process, this.scratch, this.key, this.started)
+    : idleSince = started {
+    process.stdout
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen(
+          (line) => (_onLine ?? _unread.add)(line),
+          onDone: _stdoutDone.complete,
+        );
+    process.stderr.transform(utf8.decoder).listen((text) {
+      if (_stderr.length < 64 << 10) _stderr.write(text);
+    }, onDone: _stderrDone.complete);
+    // A write to a claude that has exited is its outcome to report, not a
+    // failure of the driver's.
+    unawaited(process.stdin.done.catchError((Object _) {}));
     unawaited(process.exitCode.then((_) => hasExited = true));
   }
 
   final Process process;
   final Directory scratch;
+  final _SpareKey key;
   final DateTime started;
   var hasExited = false;
 
-  /// Ends a `claude` no call used: kills it and deletes its folder.
-  Future<void> end() async {
-    process.kill(ProcessSignal.sigkill);
-    await Future.wait([
-      process.stdout.drain<void>(),
-      process.stderr.drain<void>(),
-      process.exitCode,
-    ]);
+  /// Whether it has said which tools it offers: once, on its first call.
+  var initialised = false;
+
+  /// As a live session: the turns it holds, its last reply the last of
+  /// them, and since when it has waited.
+  List<Turn> turns = const [];
+  DateTime idleSince;
+
+  void Function(String line)? _onLine;
+  void Function()? _onEnded;
+  final _unread = <String>[];
+  final _stdoutDone = Completer<void>();
+  final _stderrDone = Completer<void>();
+  final _stderr = StringBuffer();
+
+  /// What it has written to stderr, its first 64 KiB.
+  String get stderr => _stderr.toString();
+
+  /// Hands each line of its output to [onLine], those no call has read
+  /// first, and calls [ended] when its output ends.
+  void listen(
+    void Function(String line) onLine, {
+    required void Function() ended,
+  }) {
+    _onLine = onLine;
+    _onEnded = ended;
+    final unread = [..._unread];
+    _unread.clear();
+    unread.forEach(onLine);
+    unawaited(_stdoutDone.future.then((_) => _onEnded?.call()));
+  }
+
+  void unlisten() {
+    _onLine = null;
+    _onEnded = null;
+  }
+
+  /// Writes [message] to its stdin, closing stdin after it when [last].
+  void write(String message, {required bool last}) {
+    process.stdin.add(utf8.encode(message));
+    if (last) unawaited(process.stdin.close().catchError((Object _) {}));
+  }
+
+  void kill() => process.kill(ProcessSignal.sigkill);
+
+  /// Closes its stdin and waits for it to exit, killing it after ten
+  /// seconds; deletes its folder. Its exit code.
+  Future<int> finish() async {
+    unlisten();
+    unawaited(process.stdin.close().catchError((Object _) {}));
+    final exitCode = await process.exitCode.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        kill();
+        return process.exitCode;
+      },
+    );
+    // A child claude left behind can hold its pipes open after it exits.
+    await Future.wait([_stdoutDone.future, _stderrDone.future])
+        .timeout(const Duration(seconds: 2), onTimeout: () => []);
     await scratch.delete(recursive: true);
+    return exitCode;
+  }
+
+  /// Ends it at once: kills it and deletes its folder.
+  Future<void> end() async {
+    kill();
+    await finish();
   }
 }
 
@@ -544,6 +699,7 @@ sealed class ClaudeEvent {
       {'type': 'system', 'subtype': 'init', 'tools': final List<Object?> t} =>
         Initialised([for (final tool in t) '$tool']),
       {'type': 'system', 'subtype': 'init'} => const Initialised(['?']),
+      {'type': 'system', 'subtype': 'compact_boundary'} => const Compacted(),
       {'type': 'system', 'subtype': String()} => const Notice(),
       {
         'type': 'stream_event',
@@ -651,6 +807,13 @@ final class Unanswered extends ClaudeEvent {
 /// A line that is not a JSON object.
 final class Unreadable extends ClaudeEvent {
   const Unreadable();
+}
+
+/// Claude Code replaced the conversation with a summary of it, so the model
+/// no longer reads the turns that were approved. `DISABLE_AUTO_COMPACT`
+/// should stop it; this is the check that it did.
+final class Compacted extends ClaudeEvent {
+  const Compacted();
 }
 
 /// A system event other than init, such as a status or 2.1.323's

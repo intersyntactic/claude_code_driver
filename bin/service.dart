@@ -10,6 +10,8 @@
 /// `claude` on PATH when unset; it must be 2.1.311 or later, or 2.1.112.
 /// `CLAUDE_CODE_DRIVER_SPARES` is how many combinations of sign-in, model
 /// and system prompt keep a `claude` started and waiting, 0 when unset.
+/// `CLAUDE_CODE_DRIVER_LIVE_SESSIONS` is how many `claude`s are kept running
+/// for their trajectory's next step, 0 when unset.
 /// systemd sets `CREDENTIALS_DIRECTORY` from `LoadCredential=`.
 ///
 /// Exits 78 when it cannot start as configured, and closes cleanly on
@@ -43,11 +45,8 @@ Future<void> main() async {
   final flags =
       ClaudeCodeFlags.forVersion(version) ??
       _fail('claude $version is neither 2.1.311 or later nor 2.1.112');
-  final sparesSetting = env['CLAUDE_CODE_DRIVER_SPARES'];
-  final spares = sparesSetting == null ? 0 : int.tryParse(sparesSetting);
-  if (spares == null || spares < 0) {
-    _fail('CLAUDE_CODE_DRIVER_SPARES is not a count: $sparesSetting');
-  }
+  final spares = _count(env, 'CLAUDE_CODE_DRIVER_SPARES');
+  final liveSessions = _count(env, 'CLAUDE_CODE_DRIVER_LIVE_SESSIONS');
   final Map<ModelSignInName, Credential> signIns;
   try {
     signIns = await Credential.load(Directory(credentials));
@@ -64,6 +63,7 @@ Future<void> main() async {
       flags: flags,
       claude: claude,
       spares: spares,
+      liveSessions: liveSessions,
       log: stdout.writeln,
     );
   } on Object catch (e) {
@@ -71,7 +71,8 @@ Future<void> main() async {
   }
   stdout.writeln(
     'listening on $socket for $caller, claude $version, '
-    'model sign-ins: ${signIns.keys.join(' ')}, spares: $spares',
+    'model sign-ins: ${signIns.keys.join(' ')}, spares: $spares, '
+    'live sessions: $liveSessions',
   );
   final stop = Completer<void>();
   for (final signal in [ProcessSignal.sigterm, ProcessSignal.sigint]) {
@@ -94,6 +95,14 @@ UserId? _uidOf(String user) {
         _ => null,
       };
   return number == null ? null : UserId.parse(number);
+}
+
+/// The count the variable [name] in [env] sets, 0 when unset.
+int _count(Map<String, String> env, String name) {
+  final setting = env[name];
+  final count = setting == null ? 0 : int.tryParse(setting);
+  if (count == null || count < 0) _fail('$name is not a count: $setting');
+  return count;
 }
 
 Never _fail(String why) {

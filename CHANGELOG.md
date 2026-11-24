@@ -7,6 +7,9 @@
 - Spares: `spares:` (the service's `CLAUDE_CODE_DRIVER_SPARES`, 0 by default) keeps a `claude` started and waiting for that many combinations of sign-in, model and system prompt, so a call skips Claude Code's startup. A spare is used once, like any call's `claude`; one past `spareLifetime` (30 minutes) or one that exited is ended instead. `close()` ends them all.
 - `claude` runs with `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, which stops 2.1.112 sending each prompt to Haiku 4.5 for a session title.
 - A `system` event other than `init` may come before `init`; 2.1.323 prints `ui_invalidate` there when reading stream-json. Any other event before `init` is still refused.
+- Live sessions: `liveSessions:` (the service's `CLAUDE_CODE_DRIVER_LIVE_SESSIONS`, 0 by default) keeps a `claude` running after a call it finished with a whole reply. A later call whose turns are exactly the ones it holds, then its reply, then one or more user turns, is written into it as one message of only the new turns (`ClaudeCodeDriver.continuation`); any other call starts afresh, as before. A session idle past `sessionLifetime` (30 minutes), or one that exited, is ended; `close()` ends them all.
+- `claude` runs with `DISABLE_AUTO_COMPACT=1`, so a full context is refused (`Prompt is too long`) rather than silently summarised; a `compact_boundary` event is refused all the same, and its `claude` ended.
+- A `claude` that has exited is waited on for its output at most 2 s more, since a child it left can hold its pipes open.
 
 ## 0.6.2
 
