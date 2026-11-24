@@ -99,6 +99,49 @@ exit $exit
     return script.path;
   }
 
+  /// The path of a `claude` that, like Claude Code reading stream-json,
+  /// answers each line of stdin until stdin closes: it adds to [starts] and
+  /// [reads], keeps each line for [messagesTo], prints init before its first
+  /// answer, and answers `reply <pid> <n>`. [beforeResult] is printed ahead
+  /// of each result; [cutOff] stops each reply at its token limit, and
+  /// [error] makes each result an error.
+  String sessionScript({
+    String? beforeResult,
+    bool cutOff = false,
+    bool error = false,
+  }) {
+    final r = notes.path;
+    final more = cutOff ? ',"stop_reason":"max_tokens"' : '';
+    final script = File('${dir.path}/claude-session')
+      ..writeAsStringSync('''#!/bin/sh
+prev=
+for a in "\$@"; do
+  if [ "\$prev" = --system-prompt-file ]; then
+    echo "start \$\$ \$(dirname "\$HOME") \$(cat "\$a")" >> $r/log
+  fi
+  prev="\$a"
+done
+n=0
+while IFS= read -r line; do
+  n=\$((n+1))
+  printf '%s\\n' "\$line" >> $r/messages.\$\$
+  echo "read \$\$" >> $r/log
+  [ \$n -eq 1 ] && printf '%s\\n' '${init([])}'
+  ${beforeResult == null ? '' : "printf '%s\\n' '$beforeResult'"}
+  printf '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"reply %s %s"}}}\\n' \$\$ \$n
+  printf '{"type":"result","subtype":"success","is_error":$error,"result":"reply %s %s"$more}\\n' \$\$ \$n
+done
+''');
+    Process.runSync('chmod', ['+x', script.path]);
+    return script.path;
+  }
+
+  /// The messages the `claude` [pid] read, each decoded.
+  List<Object?> messagesTo(String pid) => [
+    for (final line in File('${notes.path}/messages.$pid').readAsLinesSync())
+      jsonDecode(line),
+  ];
+
   String noted(String name) => File('${notes.path}/$name').readAsStringSync();
 
   /// The prompt in the one stream-json user message `claude` read.
@@ -163,6 +206,8 @@ exit $exit
     Duration limit = const Duration(seconds: 10),
     int spares = 0,
     Duration spareLifetime = const Duration(minutes: 30),
+    int liveSessions = 0,
+    Duration sessionLifetime = const Duration(minutes: 30),
     DateTime Function() clock = DateTime.now,
     List<String>? log,
     SocketUserReader? socketUserReader,
@@ -176,6 +221,8 @@ exit $exit
     limit: limit,
     spares: spares,
     spareLifetime: spareLifetime,
+    liveSessions: liveSessions,
+    sessionLifetime: sessionLifetime,
     clock: clock,
     log: log?.add,
     socketUserReader: socketUserReader,

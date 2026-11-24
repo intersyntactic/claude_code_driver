@@ -145,6 +145,37 @@ A call's replacement spare starts while the call runs, and the two share
 the board's cores: a `claude` left waiting with nothing else running took
 0.5–0.75 s from message to result.
 
+## Live sessions
+
+A loop asks for each step of a trajectory with the whole history again.
+With `liveSessions: n` the driver keeps the `claude` that answered a step
+running, and writes the next step into it as only its new turns, so no step
+after the first starts Claude Code, and the model reads real user and
+assistant turns rather than one flattened transcript.
+
+- **Only an exact continuation continues.** A call goes to an idle session
+  when it has the session's sign-in, model and system prompt, and its turns
+  are exactly the turns the session holds, then the session's own reply,
+  then one or more user turns. Those go in as one message, a text block
+  each, so the model answers once. Anything else, an edited turn, a missing
+  reply, a call with no new user turn, starts afresh with the whole history
+  flattened, as without sessions. So the model only ever reads the
+  approved turns, compared byte for byte.
+- **Kept only after a whole reply.** A cut-off reply comes back from a loop
+  with a note added, and a refused call adds no reply at all, so after
+  either the `claude` is ended.
+- **Never summarised.** By default Claude Code summarises a full context
+  into a new conversation and answers from that, reporting success. With
+  `DISABLE_AUTO_COMPACT=1` it refuses instead (`Prompt is too long`), and a
+  `compact_boundary` event is refused all the same.
+- At most `n` sessions wait, the least recently used ended first; one idle
+  for `sessionLifetime` (30 minutes) is ended. Each holds the seat's token
+  as a spare does.
+
+Through this driver on the VisionFive 2, Claude Code 2.1.112, a stand-in API
+that answers after 3 s: a trajectory's first step 16.9 s on Node 20 (11.0 s
+on Node 24 with a warm compile cache), each step after it 3.1–3.2 s.
+
 ## Claude Code 2.1.112
 
 No native Claude Code is built for riscv64. 2.1.112 is its last release in
