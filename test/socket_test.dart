@@ -32,7 +32,7 @@ void main() {
       [for (final p in reported) (p as ReplyArriving).text],
       ['hel', 'lo'],
     );
-    expect(fake.sentPrompt, 'User: hello');
+    expect(fake.sentTurns, ['hello']);
     expect(fake.noted('system-prompt'), 'You are Cam.');
   });
 
