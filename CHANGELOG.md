@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1
+
+- is_effects ^0.14.3. It moves `SignIn` into `is_sign_in_vocabulary`, re-exported as the same type, and its `decodeAddressPrefix` refuses keys other than `origin` and `pathPrefix`; neither touches what the driver uses.
+
 ## 0.7.0
 
 - **Breaking:** `ClaudeCodeDriver.start` takes `flags:`, a `ClaudeCodeFlags`: `everyFlag` for Claude Code 2.1.311 and later, `withoutSafeModeOrRestricted` for 2.1.112, its last release in plain JavaScript, which runs on any Node (riscv64 among them). `ClaudeCodeFlags.forVersion` gives the flags for a version, or null for one the driver was not checked against, and the service refuses such a version at start.
