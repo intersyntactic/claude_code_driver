@@ -100,7 +100,7 @@ void main() {
         null => Uint8List(4),
         -1 => throw const SocketException(
           'getsockopt failed',
-          osError: OSError('Bad file descriptor', 9),
+          osError: OSError('Bad file\ndescriptor', 9),
         ),
         final uid =>
           (ByteData(12)
@@ -135,7 +135,13 @@ void main() {
         log,
         logged == null
             ? isEmpty
-            : [allOf(startsWith('refused a peer: '), contains(logged))],
+            : [
+                allOf(
+                  startsWith('refused a peer: '),
+                  contains(logged),
+                  isNot(contains('\n')),
+                ),
+              ],
         reason: 'peer $uid',
       );
       if (fake.ran) fake.notes.listSync().forEach((f) => f.deleteSync());
