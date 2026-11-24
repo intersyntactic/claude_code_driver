@@ -3,7 +3,7 @@
 ## 0.8.1
 
 - A refused peer is logged before its socket is closed, one line saying why: `refused a peer: not allowed: user 1002 is not one of {998}`, or `refused a peer: unread: …` with the kernel's error when its user could not be read. The refusal itself is unchanged.
-- is_unix_socket_user_check ^0.2.0, whose `decide` says why a peer is refused.
+- is_unix_socket_user_check ^0.2.1, whose `decide` says why a peer is refused, on one line even when the kernel's error text holds a line break.
 
 ## 0.8.0
 
