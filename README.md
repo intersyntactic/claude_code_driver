@@ -195,6 +195,9 @@ the `claude` the host gives the driver:
 
 ```sh
 #!/bin/sh
+# --no-sparkplug: Node v24.22.0 and later crash in Sparkplug on riscv64
+# (https://github.com/nodejs/unofficial-builds/issues/253). It can go once a
+# v24 build carries V8 ec2f506f; until then it is harmless.
 NODE_COMPILE_CACHE=/var/cache/claude-code-driver/node exec \
   /opt/node/bin/node --no-sparkplug /opt/claude-code-2.1.112/cli.js "$@"
 ```
