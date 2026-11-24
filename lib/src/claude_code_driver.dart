@@ -24,12 +24,12 @@ import 'model_request.dart';
 /// call. It runs as its own user, so a seat's token is readable by this
 /// process and no other.
 ///
-/// One call is one text message: its `request`, an input array of turns,
-/// goes to stdin flattened by [promptFor], and its `systemPrompt` to
-/// `--system-prompt-file` as its UTF-8 bytes; the command line is
-/// [arguments], fixed for a model. Claude Code takes no earlier assistant
-/// turns, so the turns become lines of one text. No turn names a model, so
-/// the model is only ever the one decided.
+/// One call is one user message: its `request`, an input array of turns,
+/// is flattened by [promptFor] and goes to stdin as [userMessage], and its
+/// `systemPrompt` to `--system-prompt-file` as its UTF-8 bytes; the command
+/// line is [arguments], fixed for a model. Claude Code takes no earlier
+/// assistant turns, so the turns become lines of one text. No turn names a
+/// model, so the model is only ever the one decided.
 ///
 /// The logbook holds what was given to `claude -p`, not the exact wire to
 /// Anthropic: Claude Code may add context of its own.
@@ -37,8 +37,12 @@ final class ClaudeCodeDriver {
   ClaudeCodeDriver._(
     this._signIns,
     this._claude,
+    this._flags,
     this._path,
     this._limit,
+    this._spares,
+    this._spareLifetime,
+    this._clock,
     this._log,
     this._socketUserCheck,
     this._socket,
@@ -47,25 +51,40 @@ final class ClaudeCodeDriver {
 
   /// Listens on [socket] for the user [caller] alone, asking the model as
   /// the seats in [signIns]. [claude] is the `claude` executable, by path or
-  /// by name on [path]; [limit] is how long one call may run;
-  /// [socketUserReader] reads each caller's user from the kernel, the
-  /// running kernel's by default. A socket file nothing listens on is
-  /// replaced.
+  /// by name on [path], and [flags] the ones it accepts; [limit] is how long
+  /// one call may run; [socketUserReader] reads each caller's user from the
+  /// kernel, the running kernel's by default. A socket file nothing listens
+  /// on is replaced.
+  ///
+  /// [spares] is how many combinations of sign-in, model and system prompt
+  /// are kept warm: after a call, a `claude` for the same three is started
+  /// and left waiting, so the next such call skips Claude Code's startup.
+  /// None by default. A spare older than [spareLifetime] by [clock], or one
+  /// that has exited, is replaced instead of used.
   static Future<ClaudeCodeDriver> start(
     Map<ModelSignInName, Credential> signIns, {
     required UserId caller,
     required File socket,
+    required ClaudeCodeFlags flags,
     String claude = 'claude',
     String? path,
     Duration limit = const Duration(minutes: 10),
+    int spares = 0,
+    Duration spareLifetime = const Duration(minutes: 30),
+    DateTime Function() clock = DateTime.now,
     void Function(String line)? log,
     SocketUserReader? socketUserReader,
   }) async {
+    if (spares < 0) throw ArgumentError.value(spares, 'spares', 'negative');
     final driver = ClaudeCodeDriver._(
       Map.unmodifiable(signIns),
       claude,
+      flags,
       path ?? Platform.environment['PATH'] ?? '/usr/bin:/bin',
       limit,
+      spares,
+      spareLifetime,
+      clock,
       log ?? _silent,
       SocketUserCheck.only(caller, reader: socketUserReader),
       socket,
@@ -79,6 +98,20 @@ final class ClaudeCodeDriver {
 
   /// The `claude` executable, by path or by name on [_path].
   final String _claude;
+
+  /// The flags [_claude] accepts.
+  final ClaudeCodeFlags _flags;
+
+  /// How many combinations of sign-in, model and system prompt keep a
+  /// spare, and how long one may wait before it is replaced.
+  final int _spares;
+  final Duration _spareLifetime;
+  final DateTime Function() _clock;
+
+  /// The waiting spares, least recently used first.
+  final _waiting = <_SpareKey, _Claude>{};
+
+  var _closed = false;
 
   /// The only variable of the driver's own environment `claude` is given.
   final String _path;
@@ -115,9 +148,14 @@ final class ClaudeCodeDriver {
     return ServerSocket.bind(address, 0);
   }
 
+  /// Stops listening and ends every spare, deleting its folder.
   Future<void> close() async {
+    _closed = true;
     await _server.close();
     if (_socket.existsSync()) _socket.deleteSync();
+    final spares = [..._waiting.values];
+    _waiting.clear();
+    await Future.wait([for (final spare in spares) spare.end()]);
   }
 
   Future<void> _serve(Socket socket) async {
@@ -179,23 +217,26 @@ final class ClaudeCodeDriver {
   /// the web even if a later Claude Code reads `--tools ""` differently;
   /// `--safe-mode` stops hooks, skills, plugins and MCP servers the user's
   /// settings would load, which `--setting-sources ""` alone does not.
-  /// Never `--bare`: it reads only `ANTHROPIC_API_KEY`, never the seat.
+  /// [flags] leaves out the two a Claude Code does not accept. Never
+  /// `--bare`: it reads only `ANTHROPIC_API_KEY`, never the seat.
+  ///
+  /// The request goes in as one stream-json user message: a text prompt is
+  /// abandoned when stdin stays empty for 3 s, which a spare's does.
   ///
   /// The same for every call to [model]: the system prompt is named by a
   /// path relative to the working directory, which claude resolves there.
-  static List<String> arguments(ModelName model) => [
+  static List<String> arguments(ModelName model, ClaudeCodeFlags flags) => [
     '-p',
     '--tools',
     '',
-    '--restricted',
-    '--safe-mode',
+    if (flags == ClaudeCodeFlags.everyFlag) ...['--restricted', '--safe-mode'],
     '--strict-mcp-config',
     '--setting-sources',
     '',
     '--disable-slash-commands',
     '--no-session-persistence',
     '--input-format',
-    'text',
+    'stream-json',
     '--output-format',
     'stream-json',
     '--verbose',
@@ -205,6 +246,14 @@ final class ClaudeCodeDriver {
     '--system-prompt-file',
     '../system-prompt',
   ];
+
+  /// The one line written to claude's stdin for [prompt]: a stream-json
+  /// user message whose content is [prompt] exactly.
+  static String userMessage(String prompt) =>
+      '${jsonEncode({
+        'type': 'user',
+        'message': {'role': 'user', 'content': prompt},
+      })}\n';
 
   Future<Outcome<ModelReply>> _ask(
     ModelSignInName signIn,
@@ -222,9 +271,72 @@ final class ClaudeCodeDriver {
       return Refused('not a request: ${e.message}');
     }
 
-    // A fresh home and config per call, so no login, transcript or setting
-    // outlives it or is shared between concurrent calls.
+    final key = (signIn, model, systemPrompt);
+    final _Claude claude;
+    try {
+      claude =
+          _takeSpare(key) ??
+          await _startClaude(credential, model, systemPrompt);
+    } on ProcessException catch (e) {
+      return Refused('claude did not start: ${e.message}');
+    }
+    if (_spares > 0) unawaited(_keepSpare(key, credential));
+    try {
+      return await _run(
+        claude.process,
+        userMessage(prompt),
+        report,
+        model,
+        '$signIn $model',
+      );
+    } finally {
+      await claude.scratch.delete(recursive: true);
+    }
+  }
+
+  /// The waiting spare for [key] if it can still be used, taking it from
+  /// the waiting ones; null when there is none to use.
+  _Claude? _takeSpare(_SpareKey key) {
+    final spare = _waiting.remove(key);
+    if (spare == null) return null;
+    final stale = !_clock().isBefore(spare.started.add(_spareLifetime));
+    if (!spare.hasExited && !stale) return spare;
+    unawaited(spare.end());
+    return null;
+  }
+
+  /// Starts a spare for [key] and leaves it waiting, ending the one it
+  /// replaces and the least recently used beyond [_spares].
+  Future<void> _keepSpare(_SpareKey key, Credential credential) async {
+    final (signIn, model, systemPrompt) = key;
+    final _Claude spare;
+    try {
+      spare = await _startClaude(credential, model, systemPrompt);
+    } on ProcessException catch (e) {
+      _log('$signIn $model: no spare: claude did not start: ${e.message}');
+      return;
+    }
+    if (_closed) return spare.end();
+    final ending = [?_waiting.remove(key)];
+    _waiting[key] = spare;
+    while (_waiting.length > _spares) {
+      ending.add(_waiting.remove(_waiting.keys.first)!);
+    }
+    await Future.wait([for (final old in ending) old.end()]);
+  }
+
+  /// Starts `claude` for [model] and [systemPrompt], signed in with
+  /// [credential], waiting for its one message on stdin.
+  ///
+  /// A fresh home and config per `claude`, so no login, transcript or
+  /// setting outlives a call or is shared between concurrent calls.
+  Future<_Claude> _startClaude(
+    Credential credential,
+    ModelName model,
+    String systemPrompt,
+  ) async {
     final scratch = await Directory.systemTemp.createTemp('claude-code-call');
+    var started = false;
     try {
       final home = await Directory('${scratch.path}/home').create();
       final config = await Directory('${scratch.path}/config').create();
@@ -234,37 +346,36 @@ final class ClaudeCodeDriver {
       // arguments' `../system-prompt` finds it.
       await File('${scratch.path}/system-prompt')
           .writeAsString(systemPrompt, flush: true);
-
-      final Process process;
-      try {
-        process = await Process.start(
-          _claude,
-          arguments(model),
-          workingDirectory: work.path,
-          environment: {
-            'PATH': _path,
-            'HOME': home.path,
-            'CLAUDE_CONFIG_DIR': config.path,
-            ...switch (credential) {
-              ClaudeCodeSetupToken(:final token) => {
-                'CLAUDE_CODE_OAUTH_TOKEN': token,
-              },
+      final process = await Process.start(
+        _claude,
+        arguments(model, _flags),
+        workingDirectory: work.path,
+        environment: {
+          'PATH': _path,
+          'HOME': home.path,
+          'CLAUDE_CONFIG_DIR': config.path,
+          // Takes away what a call does not ask for, such as 2.1.112's
+          // request for a session title, which carries the prompt to
+          // another model.
+          'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1',
+          ...switch (credential) {
+            ClaudeCodeSetupToken(:final token) => {
+              'CLAUDE_CODE_OAUTH_TOKEN': token,
             },
           },
-          includeParentEnvironment: false,
-        );
-      } on ProcessException catch (e) {
-        return Refused('claude did not start: ${e.message}');
-      }
-      return await _run(process, prompt, report, model, '$signIn $model');
+        },
+        includeParentEnvironment: false,
+      );
+      started = true;
+      return _Claude(process, scratch, _clock());
     } finally {
-      await scratch.delete(recursive: true);
+      if (!started) await scratch.delete(recursive: true);
     }
   }
 
   Future<Outcome<ModelReply>> _run(
     Process process,
-    String request,
+    String message,
     Report report,
     ModelName model,
     String call,
@@ -273,7 +384,7 @@ final class ClaudeCodeDriver {
     final stderrDone = process.stderr
         .transform(utf8.decoder)
         .forEach((s) => stderr.write(s));
-    process.stdin.add(utf8.encode(request));
+    process.stdin.add(utf8.encode(message));
     // claude may exit before reading all of stdin; that is its outcome to
     // report, not a failure of the write.
     unawaited(process.stdin.close().catchError((Object _) {}));
@@ -295,6 +406,8 @@ final class ClaudeCodeDriver {
             initialised = true;
           case Unreadable():
             _log('$call: unreadable line: ${_clip(line)}');
+          case Notice():
+            break;
           case _ when !initialised:
             process.kill(ProcessSignal.sigkill);
             return const Refused('claude did not say which tools it offers');
@@ -363,6 +476,57 @@ final class ClaudeCodeDriver {
       s.length <= 2000 ? s : '${s.substring(0, 2000)}…';
 }
 
+/// Which spares a call can use: they share its sign-in, model and system
+/// prompt, all three fixed when `claude` starts.
+typedef _SpareKey = (ModelSignInName, ModelName, String);
+
+/// A started `claude` and the folder it runs in.
+final class _Claude {
+  _Claude(this.process, this.scratch, this.started) {
+    unawaited(process.exitCode.then((_) => hasExited = true));
+  }
+
+  final Process process;
+  final Directory scratch;
+  final DateTime started;
+  var hasExited = false;
+
+  /// Ends a `claude` no call used: kills it and deletes its folder.
+  Future<void> end() async {
+    process.kill(ProcessSignal.sigkill);
+    await Future.wait([
+      process.stdout.drain<void>(),
+      process.stderr.drain<void>(),
+      process.exitCode,
+    ]);
+    await scratch.delete(recursive: true);
+  }
+}
+
+/// Which of the driver's flags a Claude Code accepts: one case for each
+/// version the driver's walls were checked against.
+enum ClaudeCodeFlags {
+  /// 2.1.311 and later: every flag in [ClaudeCodeDriver.arguments].
+  everyFlag,
+
+  /// 2.1.112, the last release in plain JavaScript, which runs on any Node
+  /// (riscv64 among them). It has no `--safe-mode` or `--restricted`; with
+  /// the rest, nothing planted in the working directory or its parent
+  /// loaded: no CLAUDE.md, skill, agent, command, output style, setting,
+  /// hook or `.mcp.json`.
+  withoutSafeModeOrRestricted;
+
+  /// The flags [version] accepts, or null for a version the driver was not
+  /// checked against.
+  static ClaudeCodeFlags? forVersion(String version) =>
+      ClaudeCodeDriver.atLeast(version, '2.1.311')
+      ? everyFlag
+      : ClaudeCodeDriver.atLeast(version, '2.1.112') &&
+            !ClaudeCodeDriver.atLeast(version, '2.1.113')
+      ? withoutSafeModeOrRestricted
+      : null;
+}
+
 /// One line of `claude -p --output-format stream-json`, read once here so
 /// nothing else reads its keys.
 sealed class ClaudeEvent {
@@ -380,6 +544,7 @@ sealed class ClaudeEvent {
       {'type': 'system', 'subtype': 'init', 'tools': final List<Object?> t} =>
         Initialised([for (final tool in t) '$tool']),
       {'type': 'system', 'subtype': 'init'} => const Initialised(['?']),
+      {'type': 'system', 'subtype': String()} => const Notice(),
       {
         'type': 'stream_event',
         'event': {
@@ -486,6 +651,13 @@ final class Unanswered extends ClaudeEvent {
 /// A line that is not a JSON object.
 final class Unreadable extends ClaudeEvent {
   const Unreadable();
+}
+
+/// A system event other than init, such as a status or 2.1.323's
+/// `ui_invalidate` ahead of init: Claude Code's own, never a model turn,
+/// so it may come before init.
+final class Notice extends ClaudeEvent {
+  const Notice();
 }
 
 /// Any other event, such as an assistant message or a rate limit notice.

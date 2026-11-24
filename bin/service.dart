@@ -7,8 +7,10 @@
 ///
 /// `CLAUDE_CODE_DRIVER_CALLER` is the one user, by name or id, whose calls
 /// it carries out. `CLAUDE_CODE_DRIVER_CLAUDE` is the `claude` executable,
-/// `claude` on PATH when unset. systemd sets `CREDENTIALS_DIRECTORY` from
-/// `LoadCredential=`.
+/// `claude` on PATH when unset; it must be 2.1.311 or later, or 2.1.112.
+/// `CLAUDE_CODE_DRIVER_SPARES` is how many combinations of sign-in, model
+/// and system prompt keep a `claude` started and waiting, 0 when unset.
+/// systemd sets `CREDENTIALS_DIRECTORY` from `LoadCredential=`.
 ///
 /// Exits 78 when it cannot start as configured, and closes cleanly on
 /// SIGTERM or SIGINT.
@@ -20,9 +22,6 @@ import 'dart:io';
 import 'package:is_claude_code_driver/is_claude_code_driver.dart';
 import 'package:is_effects/is_effects.dart';
 import 'package:is_unix_socket_user_check/is_unix_socket_user_check.dart';
-
-/// The oldest Claude Code with every flag the driver passes.
-const _leastClaude = '2.1.311';
 
 Future<void> main() async {
   final env = Platform.environment;
@@ -41,8 +40,13 @@ Future<void> main() async {
   final version =
       await ClaudeCodeDriver.versionOf(claude) ??
       _fail('$claude --version did not answer with a version');
-  if (!ClaudeCodeDriver.atLeast(version, _leastClaude)) {
-    _fail('claude $version is older than $_leastClaude');
+  final flags =
+      ClaudeCodeFlags.forVersion(version) ??
+      _fail('claude $version is neither 2.1.311 or later nor 2.1.112');
+  final sparesSetting = env['CLAUDE_CODE_DRIVER_SPARES'];
+  final spares = sparesSetting == null ? 0 : int.tryParse(sparesSetting);
+  if (spares == null || spares < 0) {
+    _fail('CLAUDE_CODE_DRIVER_SPARES is not a count: $sparesSetting');
   }
   final Map<ModelSignInName, Credential> signIns;
   try {
@@ -57,7 +61,9 @@ Future<void> main() async {
       signIns,
       caller: uid,
       socket: File(socket),
+      flags: flags,
       claude: claude,
+      spares: spares,
       log: stdout.writeln,
     );
   } on Object catch (e) {
@@ -65,7 +71,7 @@ Future<void> main() async {
   }
   stdout.writeln(
     'listening on $socket for $caller, claude $version, '
-    'model sign-ins: ${signIns.keys.join(' ')}',
+    'model sign-ins: ${signIns.keys.join(' ')}, spares: $spares',
   );
   final stop = Completer<void>();
   for (final signal in [ProcessSignal.sigterm, ProcessSignal.sigint]) {

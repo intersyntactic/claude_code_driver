@@ -52,10 +52,7 @@ void main() {
       File('${fake.notes.path}/system-prompt').readAsBytesSync(),
       utf8.encode(systemPrompt),
     );
-    expect(
-      File('${fake.notes.path}/stdin').readAsBytesSync(),
-      utf8.encode('User: $content'),
-    );
+    expect(utf8.encode(fake.sentPrompt), utf8.encode('User: $content'));
   });
 
   test('flattens an input array into one line per turn', () async {
@@ -69,12 +66,10 @@ void main() {
       ]),
     );
     expect(
-      File('${fake.notes.path}/stdin').readAsBytesSync(),
-      utf8.encode(
-        'User: hey are you there\n'
-        'Agent:   yep,\r\nhere “é” \u{1F600} \n'
-        'User: two\nlines',
-      ),
+      fake.sentPrompt,
+      'User: hey are you there\n'
+      'Agent:   yep,\r\nhere “é” \u{1F600} \n'
+      'User: two\nlines',
     );
   });
 
@@ -136,8 +131,9 @@ void main() {
     );
 
     final args = fake.noted('args').split('\x00')..removeLast();
-    expect(args, ClaudeCodeDriver.arguments(haiku));
+    expect(args, ClaudeCodeDriver.arguments(haiku, ClaudeCodeFlags.everyFlag));
     expect(args.sublist(0, 4), ['-p', '--tools', '', '--restricted']);
+    expect(args[args.indexOf('--input-format') + 1], 'stream-json');
     for (final flag in [
       '--safe-mode',
       '--strict-mcp-config',
@@ -151,7 +147,8 @@ void main() {
     expect(args[args.indexOf('--model') + 1], 'claude-haiku-5-5');
     expect(args, isNot(contains('You are Cam.')));
 
-    expect(fake.noted('stdin'), 'User: $content');
+    expect(fake.noted('stdin'), ClaudeCodeDriver.userMessage('User: $content'));
+    expect(fake.sentPrompt, 'User: $content');
     expect(fake.noted('system-prompt'), 'You are Cam.');
 
     final env =
@@ -169,6 +166,7 @@ void main() {
       'PATH': '/usr/bin:/bin',
       'HOME': '$scratch/home',
       'CLAUDE_CONFIG_DIR': '$scratch/config',
+      'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1',
       'CLAUDE_CODE_OAUTH_TOKEN': token.token,
     });
     expect(fake.noted('cwd').trim(), endsWith('$scratch/work'));
@@ -270,6 +268,22 @@ void main() {
     expect((outcome as Refused).why, 'claude offered tools: ?');
   });
 
+  test('lets a system notice come before claude says its tools', () async {
+    // What claude 2.1.323 printed first with --input-format stream-json.
+    final (outcome, _) = await ask(
+      fake.script([
+        jsonEncode({
+          'type': 'system',
+          'subtype': 'ui_invalidate',
+          'event': 'ui.render',
+        }),
+        init([]),
+        result('ok'),
+      ]),
+    );
+    expect((outcome as Ran<ModelReply>).output.text, 'ok');
+  });
+
   test('refuses a reply that arrives before claude says its tools', () async {
     final (outcome, reported) = await ask(
       fake.script([delta('early'), init([]), result('ok')]),
@@ -322,10 +336,44 @@ void main() {
     expect((outcome as Refused).why, startsWith('claude did not start'));
   });
 
+  test('gives 2.1.112 every flag but the two it lacks', () async {
+    final driver = await fake.start(
+      fake.script([init([]), result('ok')]),
+      flags: ClaudeCodeFlags.withoutSafeModeOrRestricted,
+    );
+    try {
+      final (outcome, _) = await call(fake.socket);
+      expect((outcome as Ran<ModelReply>).output.text, 'ok');
+    } finally {
+      await driver.close();
+    }
+    final args = fake.noted('args').split('\x00')..removeLast();
+    expect(
+      args,
+      ClaudeCodeDriver.arguments(haiku, ClaudeCodeFlags.everyFlag)
+        ..remove('--restricted')
+        ..remove('--safe-mode'),
+    );
+  });
+
   test('compares versions', () {
     expect(ClaudeCodeDriver.atLeast('2.1.326', '2.1.311'), isTrue);
     expect(ClaudeCodeDriver.atLeast('2.1.311', '2.1.311'), isTrue);
     expect(ClaudeCodeDriver.atLeast('2.1.99', '2.1.311'), isFalse);
     expect(ClaudeCodeDriver.atLeast('3.0.0', '2.1.311'), isTrue);
+  });
+
+  test('knows the flags of only the versions it was checked against', () {
+    for (final (version, flags) in [
+      ('2.1.311', ClaudeCodeFlags.everyFlag),
+      ('2.1.326', ClaudeCodeFlags.everyFlag),
+      ('3.0.0', ClaudeCodeFlags.everyFlag),
+      ('2.1.112', ClaudeCodeFlags.withoutSafeModeOrRestricted),
+      ('2.1.111', null),
+      ('2.1.113', null),
+      ('2.1.310', null),
+    ]) {
+      expect(ClaudeCodeFlags.forVersion(version), flags, reason: version);
+    }
   });
 }
