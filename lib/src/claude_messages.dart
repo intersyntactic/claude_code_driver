@@ -167,8 +167,20 @@ List<ClaudeMessage> messagesOf(List<ModelTurn> turns) {
   if (messages.last.role == MessageRole.assistant) {
     throw const FormatException('the request ends with the agent\'s turn');
   }
+  for (final (:role, :content) in messages) {
+    if (content.last case {'type': 'tool_result'}
+        when role == MessageRole.user) {
+      content.add(const {'type': 'text', 'text': endOfToolResultsLine});
+    }
+  }
   return messages;
 }
+
+/// The text block after a message's last tool result. Claude Code ends each
+/// request with a note the API folds into the message before it; without
+/// this block the note lands inside the tool result, whose bytes then differ
+/// on the next step, and the prompt cache stops there.
+const endOfToolResultsLine = '[end of tool results]';
 
 /// The one line written to Claude Code's stdin for [message], the [index]th
 /// of its conversation. A user message that is not [last] is only appended:
