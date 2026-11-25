@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:is_claude_code_driver/is_claude_code_driver.dart';
 import 'package:is_effects/is_effects.dart';
 import 'package:test/test.dart';
 
@@ -11,6 +10,18 @@ import 'fake_claude.dart';
 String request(List<(String, String)> turns) => jsonEncode([
   for (final (role, content) in turns) {'role': role, 'content': content},
 ]);
+
+/// The line of the user message the model answers, of a text block for
+/// each of [texts], decoded.
+Map<String, Object?> answered(List<String> texts) => {
+  'type': 'user',
+  'message': {
+    'role': 'user',
+    'content': [
+      for (final text in texts) {'type': 'text', 'text': text},
+    ],
+  },
+};
 
 void main() {
   late FakeClaude fake;
@@ -30,7 +41,8 @@ void main() {
     );
     return switch (outcome) {
       Ran(:final output) => output.text,
-      Refused(:final why) => 'refused: $why',
+      NothingRan(:final why) => 'nothing ran: $why',
+      StoppedPartway(:final why) => 'stopped: $why',
     };
   }
 
@@ -53,8 +65,8 @@ void main() {
     expect(fake.reads, [pid, pid]);
     expect(fake.starts, hasLength(1));
     expect(fake.messagesTo(pid), [
-      jsonDecode(ClaudeCodeDriver.userMessage(['task'])),
-      jsonDecode(ClaudeCodeDriver.userMessage(['more'])),
+      answered(['task']),
+      answered(['more']),
     ]);
   });
 
@@ -72,10 +84,7 @@ void main() {
       ]),
       'reply $pid 2',
     );
-    expect(
-      fake.messagesTo(pid).last,
-      jsonDecode(ClaudeCodeDriver.userMessage(['one', '  two\r\n'])),
-    );
+    expect(fake.messagesTo(pid).last, answered(['one', '  two\r\n']));
   });
 
   test('starts afresh for a history the session does not hold', () async {
@@ -107,24 +116,25 @@ void main() {
       final pid = fake.reads.last;
       expect(pid, isNot(first), reason: why);
       expect(answer, 'reply $pid 1', reason: why);
+      // A fresh claude is written the whole history, the last user turns
+      // the message it answers.
       expect(
-        fake.messagesTo(pid).single,
-        jsonDecode(
-          ClaudeCodeDriver.userMessage([
-            for (final (role, content) in turns.sublist(
-              turns.lastIndexWhere((t) => t.$1 == 'assistant') + 1,
-            ))
-              if (role == 'user') content,
-          ]),
-        ),
+        fake.messagesTo(pid).last,
+        answered([
+          for (final (role, content) in turns.sublist(
+            turns.lastIndexWhere((t) => t.$1 == 'assistant') + 1,
+          ))
+            if (role == 'user') content,
+        ]),
         reason: why,
       );
+      expect(fake.messagesTo(pid), hasLength(turns.length == 2 ? 1 : 3));
     }
 
     final started = fake.starts.length;
     expect(
       await ask([('user', 'task'), ('assistant', reply)]),
-      'refused: a request ends with a user turn',
+      'nothing ran: not a request: the request ends with the agent\'s turn',
     );
     expect(fake.starts, hasLength(started));
   });
@@ -177,7 +187,7 @@ void main() {
     addTearDown(driver.close);
     expect(
       await ask([('user', 'task')]),
-      'refused: claude summarised the conversation in place of its turns',
+      'stopped: claude summarised the conversation in place of its turns',
     );
     await fake.until(() => !alive(fake.reads.single));
   });

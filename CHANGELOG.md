@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.0
+
+- **Breaking:** is_effects ^0.15.0 and is_model_vocabulary ^0.2.0. `Refused` is gone: a call that fails before its last message is written, when Claude Code has asked the model nothing, is `NothingRan` (a bad call or request, an unknown sign-in, a `claude` that does not start, the wrong MCP tools, built-in tools at init while turns are still being appended). One that fails after is `StoppedPartway` with nothing done (an error result, no result, the time limit, a summarised conversation, a call to a tool not offered, built-in tools at init). The `{}` probe now answers `{"kind":"nothingRan",…}`.
+- The request may be is_model_vocabulary's `{tools, turns}` (`ModelRequest`) as well as the array of `{role, content}` turns, which reads as `UserSaid` and `AgentSaid` with no tools.
+- Tools: the call's tools are offered through an SDK MCP server, `tools`, that the driver answers over claude's own stdin and stdout, so the model sees `mcp__tools__<name>`. They never run. claude asks permission (`--permission-prompt-tool stdio`) and is never answered, and is killed once the model's message ends; the calls come back as `Ran(ProposedToolCalls)`, each name with the prefix taken off and its input encoded once. Before any message the driver checks `mcp_status` for exactly the offered tools, and init must list exactly those. `ENABLE_TOOL_SEARCH=false` stops a placeholder tool init does not list. A call to a tool not offered stops partway, since Claude Code answers it itself and asks again.
+- Every turn is written to claude's stdin, one at a time, in place of a `--resume` transcript, which Claude Code repairs as it loads (a call with no result gets an invented "interrupted" result and the real one is dropped; a transcript ending on a user turn gets an invented "No response requested." reply). A user message that is not the last goes with `shouldQuery: false` and is acknowledged before the next is written; an assistant message carries an id of its own, without which 2.1.112 joins two turns into one. Tool calls and results are real `tool_use` and `tool_result` blocks, each result led by `[tool ran]`, `[tool failed]` or `[refused by the airlock: nothing ran]`, failed and refused ones marked `is_error`.
+- A request that breaks a rule of the conversation runs nothing: it ends with the agent's turn, a call is answered twice, late, never, or after the person speaks, a turn carries a continuation, or a tool name is over 52 characters.
+- Every `claude` runs in one empty working directory, made at start and deleted at close: Claude Code writes its path near the start of every request, and one path keeps cold calls' requests alike for the prompt cache (36,018 of about 36k tokens read on the second of two cold calls, against 0 with a folder per call).
+- A spare serves any call of its sign-in, model, system prompt and tools, earlier turns included.
+- **Breaking:** `ClaudeCodeDriver.arguments` takes `systemPromptFile:`, an absolute path, and no `resume:`; `ClaudeCodeDriver.userMessage` is gone.
+- The contract test checks tool turns as real blocks, the exact tools offered, a proposal with the API asked once, a call to a tool not offered, and an 81-turn conversation whole and in order. It passes on 2.1.326 and 2.1.112.
+
 ## 0.8.1
 
 - A refused peer is logged before its socket is closed, one line saying why: `refused a peer: not allowed: user 1002 is not one of {998}`, or `refused a peer: unread: …` with the kernel's error when its user could not be read. The refusal itself is unchanged.

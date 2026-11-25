@@ -43,7 +43,14 @@ void main() {
     );
     addTearDown(driver.close);
     final (outcome, _) = await call(fake.socket);
-    expect((outcome as Refused).why, 'claude: no');
+    expect(
+      outcome,
+      isA<StoppedPartway<ModelReply>>().having(
+        (s) => s.why,
+        'why',
+        'claude: no',
+      ),
+    );
   });
 
   test('answers the probe {} without asking the model', () async {
@@ -51,7 +58,7 @@ void main() {
     addTearDown(driver.close);
     expect(
       (await rawCall(fake.socket, '{}')).trim(),
-      '{"kind":"finished","outcome":{"kind":"refused",'
+      '{"kind":"finished","outcome":{"kind":"nothingRan",'
       '"why":"not a call: modelCall.signIn: not a string"}}',
     );
     expect(fake.ran, isFalse);
