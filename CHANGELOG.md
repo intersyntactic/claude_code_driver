@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.4
+
+- Every step of a tool loop reports the context window, so how full the context is reads against its size at each model call of the loop, not only at the final reply. Claude Code names the window only in a run's `result`, which a `ProposedToolCalls` ends before, so the driver remembers the window each seat and model's latest `FinishedReply` or `CutOffReply` named and puts it on the proposals that follow. It is null until that seat and model has replied once since the driver started.
+
 ## 0.9.3
 
 - Tool loops hit the prompt cache. Every user message that ends in tool results now ends with one more text block, `[end of tool results]`, written by the driver. Claude Code ends each request with a note of its own that the API folds into the message before it; without the block, the note landed inside the last tool result, so on the next step that result's bytes differed and the cache stopped there. Through the driver on the real API (haiku, three steps), the third step read 950 tokens from the cache with the block against 527 (system and tools only) without it; the 39 it missed are the note.

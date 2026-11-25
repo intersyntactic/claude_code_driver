@@ -172,7 +172,9 @@ driver's commit.
   is a `ProposedToolCalls` instead, read from the stream as it ends: its
   text, each call's id, its name with `mcp__tools__` taken off, and its
   input encoded once by the driver. Its usage is what the message's own
-  events report, with no context window.
+  events report. The stream never names the context window, so its
+  `contextWindow` is the one the same seat and model's latest whole reply
+  named, and null until one has.
 - **Usage.** A reply's `ModelUsage` is the last model call of the run
   (the last of `usage.iterations`, or the run's totals when none is
   listed), so its `context` is how full the context was at the end.
