@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.3
+
+- Tool loops hit the prompt cache. Every user message that ends in tool results now ends with one more text block, `[end of tool results]`, written by the driver. Claude Code ends each request with a note of its own that the API folds into the message before it; without the block, the note landed inside the last tool result, so on the next step that result's bytes differed and the cache stopped there. Through the driver on the real API (haiku, three steps), the third step read 950 tokens from the cache with the block against 527 (system and tools only) without it; the 39 it missed are the note.
+
 ## 0.9.2
 
 - Stop reasons and log lines name Claude Code as `claude code` wherever they meant the program, so none reads as the model: `claude code exited`, `claude code did not start`, `ALARM: claude code asked the model before every turn was written`, and the rest. Anything that matches on their old wording must change. `the model called tools, and claude code asked the model again` says which did which. Input for a tool call with no start now reads `input arrived for a tool call the driver never saw start`, since that call is the model's, and the start may simply be one the driver did not read.

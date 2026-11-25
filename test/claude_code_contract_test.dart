@@ -267,6 +267,7 @@ void main() {
               },
             ],
           },
+          {'type': 'text', 'text': '[end of tool results]'},
         ],
       ],
       [
@@ -294,6 +295,7 @@ void main() {
             ],
             'is_error': true,
           },
+          {'type': 'text', 'text': '[end of tool results]'},
         ],
       ],
     ]);
