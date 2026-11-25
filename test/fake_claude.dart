@@ -129,9 +129,14 @@ final class FakeClaude {
   /// which answers a line of stdin that is not the message the model
   /// answers and says whether it did: `mcp_status` with [mcpTools], an
   /// appended user message with init (listing [initTools]) the first time
-  /// and an acknowledgement, and anything else of the driver's with
-  /// nothing.
-  String _prelude(List<String> mcpTools, List<String> initTools) {
+  /// and an acknowledgement ([onAppend] in its place when given, as a
+  /// Claude Code that asked the model anyway), and anything else of the
+  /// driver's with nothing.
+  String _prelude(
+    List<String> mcpTools,
+    List<String> initTools, {
+    List<String>? onAppend,
+  }) {
     final status = jsonEncode([
       for (final name in mcpTools) {'name': name},
     ]);
@@ -146,7 +151,9 @@ control() {
       return 0;;
     '{"type":"user","shouldQuery":false'*)
       [ -z "\$inited" ] && { printf '%s\\n' '${init(initTools)}'; inited=1; }
-      printf '%s\\n' '$ack'
+      ${[
+      for (final l in onAppend ?? [ack]) "printf '%s\\n' '$l'",
+    ].join('\n      ')}
       return 0;;
     '{"type":"user"'*) return 1;;
   esac
@@ -161,13 +168,15 @@ control() {
   /// when [hang]). Each one started also adds to [starts] and, once it
   /// reads that message, to [reads]. Its MCP server offers [mcpTools] by
   /// their bare names; [initTools] are the tools its init lists for an
-  /// appended message, the offered ones by default.
+  /// appended message, the offered ones by default. [onAppend] is printed
+  /// for an appended message in place of its acknowledgement.
   String script(
     List<String> lines, {
     int exit = 0,
     bool hang = false,
     List<String> mcpTools = const [],
     List<String>? initTools,
+    List<String>? onAppend,
   }) {
     final out = File('${dir.path}/out.jsonl')
       ..writeAsStringSync(lines.map((l) => '$l\n').join());
@@ -187,7 +196,7 @@ for a in "\$@"; do
   fi
   prev="\$a"
 done
-${_prelude(mcpTools, initTools ?? [for (final t in mcpTools) 'mcp__tools__$t'])}
+${_prelude(mcpTools, initTools ?? [for (final t in mcpTools) 'mcp__tools__$t'], onAppend: onAppend)}
 while IFS= read -r line; do
   printf '%s\\n' "\$line" >> $r/stdin
   control "\$line" && continue

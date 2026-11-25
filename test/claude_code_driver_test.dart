@@ -888,6 +888,45 @@ void main() {
     expect(stopped(outcome), 'claude: Not logged in · Please run /login');
   });
 
+  test('stops partway, with an alarm, when claude asks the model about a '
+      'message that was only appended', () async {
+    final history = jsonEncode([
+      {'role': 'user', 'content': 'a'},
+      {'role': 'assistant', 'content': 'b'},
+      {'role': 'user', 'content': 'c'},
+    ]);
+    for (final asked in [
+      // As a Claude Code that ignored `shouldQuery` would print it: the
+      // model message's start, or the assistant message alone.
+      streamed({
+        'type': 'message_start',
+        'message': {'id': 'msg_1'},
+      }),
+      jsonEncode({
+        'type': 'assistant',
+        'message': {
+          'role': 'assistant',
+          'content': [
+            {'type': 'text', 'text': 'answering a'},
+          ],
+        },
+      }),
+    ]) {
+      final log = <String>[];
+      final (outcome, reported) = await ask(
+        fake.script([init([]), result('ok')], onAppend: [asked]),
+        request: history,
+        log: log,
+      );
+      expect(
+        stopped(outcome),
+        'claude asked the model before every turn was written',
+      );
+      expect(reported, isEmpty);
+      expect(log.first, contains('ALARM: claude asked the model before'));
+    }
+  });
+
   test('stops partway when claude exits without a result', () async {
     final log = <String>[];
     final (outcome, _) = await ask(fake.script([init([])], exit: 3), log: log);
