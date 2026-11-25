@@ -750,9 +750,15 @@ final class _Conversation {
         break;
       case _ when !_asked:
         // Anything else before the last message means claude asked the
-        // model about a message that was only to be appended.
+        // model about a message that was only to be appended: a request
+        // the airlock did not decide. `shouldQuery` is undocumented, so
+        // every run checks it held.
         _asked = true;
-        _stop('claude asked the model before every turn was written');
+        const why = 'claude asked the model before every turn was written';
+        log('ALARM: $why');
+        _stop(why);
+      case AssistantSpoke():
+        break;
       case MessageStarted(:final usage):
         if (_calls.isNotEmpty) {
           return _stop('claude asked the model again after it called tools');
@@ -1179,6 +1185,7 @@ sealed class ClaudeEvent {
         subtype,
       ),
       {'type': 'result'} => const Unanswered('result of no kind'),
+      {'type': 'assistant'} => const AssistantSpoke(),
       _ when JsonObject.parse(json) != null => const Other(),
       _ => const Unreadable(),
     };
@@ -1384,7 +1391,12 @@ final class Notice extends ClaudeEvent {
   const Notice();
 }
 
-/// Any other event, such as an assistant message or a rate limit notice.
+/// An assistant message as Claude Code reports it: the model was asked.
+final class AssistantSpoke extends ClaudeEvent {
+  const AssistantSpoke();
+}
+
+/// Any other event, such as a rate limit notice.
 final class Other extends ClaudeEvent {
   const Other();
 }

@@ -154,7 +154,11 @@ driver's commit.
   test/claude_code_contract_test.dart`, with `CLAUDE_CODE_CONTRACT_CLAUDE`
   naming another command, such as `node /opt/claude-code-2.1.112/cli.js`.
   `shouldQuery` is not documented by Anthropic; this test is what notices
-  when a version changes it. It passes on 2.1.326 and 2.1.112.
+  when a version changes it. It passes on 2.1.326 and 2.1.112. Every run
+  checks it too: any sign the model was asked before the last message is
+  written (a model message starting, or an assistant message) kills
+  `claude`, stops the call partway and logs an alarm, since the model was
+  asked about a request the airlock did not decide.
 - **Nothing trimmed or re-encoded.** A test hands the driver whitespace at
   both ends, CRLF, a BOM, a NUL and non-ASCII, and checks that what
   `claude` reads equals each string.

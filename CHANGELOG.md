@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.1
+
+- Every run checks that `shouldQuery: false` held. Any sign the model was asked before the last message is written now logs an alarm as well as stopping the call partway, and a bare `assistant` event counts as such a sign; before, it was let through and only the stream events caught it.
+
 ## 0.9.0
 
 - **Breaking:** is_effects ^0.15.0 and is_model_vocabulary ^0.2.0. `Refused` is gone: a call that fails before its last message is written, when Claude Code has asked the model nothing, is `NothingRan` (a bad call or request, an unknown sign-in, a `claude` that does not start, the wrong MCP tools, built-in tools at init while turns are still being appended). One that fails after is `StoppedPartway` with nothing done (an error result, no result, the time limit, a summarised conversation, a call to a tool not offered, built-in tools at init). The `{}` probe now answers `{"kind":"nothingRan",…}`.
