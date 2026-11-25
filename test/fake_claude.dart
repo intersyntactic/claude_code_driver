@@ -36,6 +36,7 @@ String result(
   'type': 'result',
   'subtype': 'success',
   'is_error': error,
+  'duration_api_ms': 812,
   'result': text,
   ...more,
 });
@@ -46,6 +47,63 @@ Map<String, Object?> tokens(int input, int cacheRead, int created, int out) => {
   'cache_creation_input_tokens': created,
   'output_tokens': out,
 };
+
+/// A stream event of the model's message.
+String streamed(Map<String, Object?> event) =>
+    jsonEncode({'type': 'stream_event', 'event': event});
+
+/// The stream of one model message that says [text] and calls [calls],
+/// each an id, a name as the model calls it, and its input, ending for
+/// [stop].
+List<String> proposing(
+  String text,
+  List<(String, String, Map<String, Object?>)> calls, {
+  String stop = 'tool_use',
+}) => [
+  streamed({
+    'type': 'message_start',
+    'message': {
+      'id': 'msg_1',
+      'usage': {...tokens(7, 300, 40, 1)},
+    },
+  }),
+  if (text.isNotEmpty) delta(text),
+  for (final (i, (id, name, input)) in calls.indexed) ...[
+    streamed({
+      'type': 'content_block_start',
+      'index': i + 1,
+      'content_block': {
+        'type': 'tool_use',
+        'id': id,
+        'name': name,
+        'input': <String, Object?>{},
+      },
+    }),
+    streamed({
+      'type': 'content_block_delta',
+      'index': i + 1,
+      'delta': {'type': 'input_json_delta', 'partial_json': jsonEncode(input)},
+    }),
+  ],
+  streamed({
+    'type': 'message_delta',
+    'delta': {'stop_reason': stop},
+    'usage': {'output_tokens': 25},
+  }),
+  streamed({'type': 'message_stop'}),
+];
+
+/// What Claude Code acknowledges an appended message with, as 2.1.112 does:
+/// its `num_turns` counts the messages so far, not the model's turns.
+final ack = jsonEncode({
+  'type': 'result',
+  'subtype': 'success',
+  'is_error': false,
+  'duration_api_ms': 0,
+  'num_turns': 2,
+  'result': '',
+  'modelUsage': <String, Object?>{},
+});
 
 /// A folder holding the driver's socket and a stand-in for `claude` that
 /// writes down how it was started into [notes].
@@ -66,11 +124,51 @@ final class FakeClaude {
 
   Future<void> delete() => dir.delete(recursive: true);
 
+  /// The shell both stand-ins begin with: like Claude Code, it asks the
+  /// driver's MCP server for its tools at once, and defines `control`,
+  /// which answers a line of stdin that is not the message the model
+  /// answers and says whether it did: `mcp_status` with [mcpTools], an
+  /// appended user message with init (listing [initTools]) the first time
+  /// and an acknowledgement, and anything else of the driver's with
+  /// nothing.
+  String _prelude(List<String> mcpTools, List<String> initTools) {
+    final status = jsonEncode([
+      for (final name in mcpTools) {'name': name},
+    ]);
+    return '''
+printf '%s\\n' '{"type":"control_request","request_id":"fake-1","request":{"subtype":"mcp_message","server_name":"tools","message":{"method":"tools/list","jsonrpc":"2.0","id":1}}}'
+inited=
+control() {
+  case "\$1" in
+    *'"subtype":"mcp_status"'*)
+      id=\$(printf '%s' "\$1" | sed 's/.*"request_id":"\\([^"]*\\)".*/\\1/')
+      printf '%s%s%s\\n' '{"type":"control_response","response":{"subtype":"success","request_id":"' "\$id" '","response":{"mcpServers":[{"name":"tools","status":"connected","tools":$status}]}}}'
+      return 0;;
+    '{"type":"user","shouldQuery":false'*)
+      [ -z "\$inited" ] && { printf '%s\\n' '${init(initTools)}'; inited=1; }
+      printf '%s\\n' '$ack'
+      return 0;;
+    '{"type":"user"'*) return 1;;
+  esac
+  return 0
+}
+''';
+  }
+
   /// The path of a `claude` that notes its arguments, environment, working
-  /// folder, system prompt and stdin, prints [lines], then exits [exit] (or
-  /// sleeps first when [hang]). Each one started also adds to [starts] and,
-  /// once its stdin closes, to [reads].
-  String script(List<String> lines, {int exit = 0, bool hang = false}) {
+  /// folder, system prompt and stdin, and, once the message the model
+  /// answers arrives, prints [lines], then exits [exit] (or sleeps first
+  /// when [hang]). Each one started also adds to [starts] and, once it
+  /// reads that message, to [reads]. Its MCP server offers [mcpTools] by
+  /// their bare names; [initTools] are the tools its init lists for an
+  /// appended message, the offered ones by default.
+  String script(
+    List<String> lines, {
+    int exit = 0,
+    bool hang = false,
+    List<String> mcpTools = const [],
+    List<String>? initTools,
+  }) {
     final out = File('${dir.path}/out.jsonl')
       ..writeAsStringSync(lines.map((l) => '$l\n').join());
     final r = notes.path;
@@ -79,9 +177,7 @@ final class FakeClaude {
 for a in "\$@"; do printf '%s\\0' "\$a"; done > $r/args
 env > $r/env
 pwd > $r/cwd
-pwd -P > $r/real-cwd
 ls -A > $r/ls
-cp -R "\$CLAUDE_CONFIG_DIR" $r/config
 prev=
 for a in "\$@"; do
   if [ "\$prev" = --system-prompt-file ]; then
@@ -91,10 +187,15 @@ for a in "\$@"; do
   fi
   prev="\$a"
 done
-cat > $r/stdin
-echo "read \$\$" >> $r/log
-cat ${out.path}
-${hang ? 'sleep 30' : ''}
+${_prelude(mcpTools, initTools ?? [for (final t in mcpTools) 'mcp__tools__$t'])}
+while IFS= read -r line; do
+  printf '%s\\n' "\$line" >> $r/stdin
+  control "\$line" && continue
+  echo "read \$\$" >> $r/log
+  cat ${out.path}
+  ${hang ? 'sleep 30' : ''}
+  exit $exit
+done
 exit $exit
 ''');
     Process.runSync('chmod', ['+x', script.path]);
@@ -102,11 +203,11 @@ exit $exit
   }
 
   /// The path of a `claude` that, like Claude Code reading stream-json,
-  /// answers each line of stdin until stdin closes: it adds to [starts] and
-  /// [reads], keeps each line for [messagesTo], prints init before its first
-  /// answer, and answers `reply <pid> <n>`. [beforeResult] is printed ahead
-  /// of each result; [cutOff] stops each reply at its token limit, and
-  /// [error] makes each result an error.
+  /// answers each message the model answers until stdin closes: it adds to
+  /// [starts] and [reads], keeps each line for [messagesTo], prints init
+  /// before its first answer, and answers `reply <pid> <n>`.
+  /// [beforeResult] is printed ahead of each result; [cutOff] stops each
+  /// reply at its token limit, and [error] makes each result an error.
   String sessionScript({
     String? beforeResult,
     bool cutOff = false,
@@ -123,79 +224,91 @@ for a in "\$@"; do
   fi
   prev="\$a"
 done
+${_prelude(const [], const [])}
 n=0
 while IFS= read -r line; do
-  n=\$((n+1))
   printf '%s\\n' "\$line" >> $r/messages.\$\$
+  control "\$line" && continue
+  n=\$((n+1))
   echo "read \$\$" >> $r/log
-  [ \$n -eq 1 ] && printf '%s\\n' '${init([])}'
+  [ -z "\$inited" ] && { printf '%s\\n' '${init([])}'; inited=1; }
   ${beforeResult == null ? '' : "printf '%s\\n' '$beforeResult'"}
   printf '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"reply %s %s"}}}\\n' \$\$ \$n
-  printf '{"type":"result","subtype":"success","is_error":$error,"result":"reply %s %s"$more}\\n' \$\$ \$n
+  printf '{"type":"result","subtype":"success","is_error":$error,"duration_api_ms":5,"result":"reply %s %s"$more}\\n' \$\$ \$n
 done
 ''');
     Process.runSync('chmod', ['+x', script.path]);
     return script.path;
   }
 
-  /// The messages the `claude` [pid] read, each decoded.
-  List<Object?> messagesTo(String pid) => [
-    for (final line in File('${notes.path}/messages.$pid').readAsLinesSync())
-      jsonDecode(line),
+  /// The messages the `claude` [pid] was written, each decoded, leaving
+  /// out the driver's dealings with its MCP server and its control
+  /// requests.
+  List<Map<String, Object?>> messagesTo(String pid) =>
+      _messages(File('${notes.path}/messages.$pid'));
+
+  static List<Map<String, Object?>> _messages(File file) => [
+    for (final line in file.readAsLinesSync())
+      if (jsonDecode(line) case final Map<String, Object?> m
+          when m['type'] == 'user' || m['type'] == 'assistant')
+        m,
   ];
 
   String noted(String name) => File('${notes.path}/$name').readAsStringSync();
 
-  /// The text of each turn in the one stream-json user message `claude`
-  /// read.
-  List<String> get sentTurns =>
-      switch (const LineSplitter().convert(noted('stdin'))) {
-        [final line] when noted('stdin').endsWith('\n') => switch (jsonDecode(
-          line,
-        )) {
-          {
-            'type': 'user',
-            'message': {'role': 'user', 'content': final List<Object?> blocks},
-          } =>
-            [
-              for (final block in blocks)
-                switch (block) {
-                  {'type': 'text', 'text': final String text}
-                      when block.length == 2 =>
-                    text,
-                  _ => throw StateError('not a text block: $block'),
-                },
-            ],
-          final other => throw StateError('not a user message: $other'),
-        },
-        final lines => throw StateError('not one line: $lines'),
-      };
+  /// Every line `claude` read, each decoded: the driver's control messages
+  /// and the messages of the conversation.
+  List<Map<String, Object?>> get read => [
+    for (final line in const LineSplitter().convert(noted('stdin')))
+      switch (jsonDecode(line)) {
+        final Map<String, Object?> m => m,
+        final other => throw StateError('not an object: $other'),
+      },
+  ];
 
-  /// The session `claude` was told to resume, or null.
-  String? get resumed {
-    final args = noted('args').split('\x00')..removeLast();
-    final at = args.indexOf('--resume');
-    return at < 0 ? null : args[at + 1];
-  }
+  /// The messages of the conversation `claude` was written, in order.
+  List<Map<String, Object?>> get sent => _messages(File('${notes.path}/stdin'));
 
-  /// The entries of the transcript `claude` was told to resume, each
-  /// decoded, from where Claude Code looks for it: its config's projects,
-  /// in the folder named for its working directory's real path.
-  List<Map<String, Object?>> get planted {
-    final project = noted('real-cwd')
-        .trim()
-        .replaceAll(RegExp('[^A-Za-z0-9]'), '-');
-    final file = File('${notes.path}/config/projects/$project/$resumed.jsonl');
-    return [
-      for (final line in file.readAsLinesSync())
-        switch (jsonDecode(line)) {
-          final Map<String, Object?> entry => entry,
-          final other => throw StateError('not an entry: $other'),
-        },
-    ];
-  }
+  /// The text of each block of the message the model answers: the last one
+  /// written.
+  List<String> get sentTurns => switch (sent.last) {
+    {
+              'type': 'user',
+              'message': {
+                'role': 'user',
+                'content': final List<Object?> blocks,
+              },
+            } &&
+            final line
+        when !line.containsKey('shouldQuery') =>
+      [
+        for (final block in blocks)
+          switch (block) {
+            {'type': 'text', 'text': final String text}
+                when block.length == 2 =>
+              text,
+            _ => throw StateError('not a text block: $block'),
+          },
+      ],
+    final other => throw StateError('not the message answered: $other'),
+  };
 
-  /// Whether `claude` was started at all.
+  /// How each written message reads: its role, whether it was only
+  /// appended, and its content. Lists, not records, so a matcher compares
+  /// what is inside them.
+  List<List<Object?>> get conversation => [
+    for (final m in sent)
+      switch (m) {
+        {
+          'type': final String type,
+          'message': {'role': final String role, 'content': final content},
+        }
+            when type == role =>
+          [role, m['shouldQuery'] == false, content],
+        _ => throw StateError('not a message: $m'),
+      },
+  ];
+
   bool get ran => File('${notes.path}/args').existsSync();
 
   List<String> get _log {
@@ -291,7 +404,7 @@ Future<(Outcome<ModelReply>, List<Progress>)> call(
         return (outcome, reported);
     }
   }
-  return (const Refused('no answer'), reported);
+  return (const NothingRan('no answer'), reported);
 }
 
 /// What the driver at [socket] answers [call] with, or '' when it hangs up.

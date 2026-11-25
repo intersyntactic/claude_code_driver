@@ -48,8 +48,8 @@ void main() {
     expect(next.pid, isNot(first.pid));
   });
 
-  test('a call with earlier turns starts its own claude and leaves the '
-      'spare waiting', () async {
+  test('a call with earlier turns is read by the spare too, the turns '
+      'written to it', () async {
     final driver = await fake.start(claude, spares: 1);
     addTearDown(driver.close);
     await expectAnswered();
@@ -62,10 +62,31 @@ void main() {
           '{"role":"user","content":"more"}]',
     );
     expect((outcome as Ran<ModelReply>).output.text, 'ok');
-    expect(fake.reads.last, isNot(first.pid));
-    expect(fake.resumed, isNotNull);
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    expect(fake.waiting.map((s) => s.pid), [first.pid]);
+    expect(fake.reads.last, first.pid);
+    // The notes hold the first call's message too, ahead of these.
+    expect(fake.conversation.skip(1), [
+      [
+        'user',
+        true,
+        [
+          {'type': 'text', 'text': 'hi'},
+        ],
+      ],
+      [
+        'assistant',
+        false,
+        [
+          {'type': 'text', 'text': 'ok'},
+        ],
+      ],
+      [
+        'user',
+        false,
+        [
+          {'type': 'text', 'text': 'more'},
+        ],
+      ],
+    ]);
   });
 
   test('a spare serves only its own sign-in, model and prompt', () async {
