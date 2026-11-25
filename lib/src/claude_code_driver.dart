@@ -29,12 +29,13 @@ import 'credential.dart';
 ///
 /// One call is one model turn. Its `request` is read by [requestOf]: the
 /// tools offered and the turns so far. The tools are offered through an MCP
-/// server the driver answers itself, over claude's own stdin and stdout, and
-/// never run: when the model calls them, claude asks the driver's permission,
-/// is never answered, and is stopped once the model's message ends, which is
-/// returned as [ProposedToolCalls]. The turns are written to claude's stdin
-/// as real messages ([messagesOf]), all but the last only appended, one
-/// at a time, so the model reads them exactly as given and in order.
+/// server the driver answers itself, over `claude`'s own stdin and stdout,
+/// and never run: when the model calls them, Claude Code asks the driver's
+/// permission, is never answered, and is stopped once the model's message
+/// ends, which is returned as [ProposedToolCalls]. The turns are written to
+/// `claude`'s stdin as real messages ([messagesOf]), all but the last only
+/// appended, one at a time, so the model reads them exactly as given and in
+/// order.
 /// The `systemPrompt` goes to `--system-prompt-file` as its UTF-8 bytes;
 /// the command line is [arguments]. No turn names a model, so the model is
 /// only ever the one decided.
@@ -268,7 +269,7 @@ final class ClaudeCodeDriver {
   /// plugins and MCP servers the user's settings would load, which
   /// `--setting-sources ""` alone does not, and leaves the SDK server here,
   /// which the driver itself answers. `--permission-prompt-tool stdio` has
-  /// claude ask the driver before any offered tool runs, which the driver
+  /// Claude Code ask the driver before any offered tool runs, which the driver
   /// never answers. [flags] leaves out the two a Claude Code does not
   /// accept. Never `--bare`: it reads only `ANTHROPIC_API_KEY`, never the
   /// seat.
@@ -354,7 +355,7 @@ final class ClaudeCodeDriver {
             _takeSpare(key) ??
             await _startClaude(key, credential, request.tools);
       } on ProcessException catch (e) {
-        return NothingRan('claude did not start: ${e.message}');
+        return NothingRan('claude code did not start: ${e.message}');
       }
       if (_spares > 0) unawaited(_keepSpare(key, credential, request.tools));
       toWrite = messages;
@@ -396,11 +397,11 @@ final class ClaudeCodeDriver {
         },
       );
     }
-    // A proposal of tools ends with claude killed, as it must be.
+    // A proposal of tools ends with `claude` killed, as it must be.
     final proposed =
         outcome is Ran<ModelReply> && outcome.output is ProposedToolCalls;
     if (outcome is! Ran<ModelReply> || (exitCode != 0 && !proposed)) {
-      _log('$call: claude exited $exitCode: ${_clip(claude.stderr)}');
+      _log('$call: claude code exited $exitCode: ${_clip(claude.stderr)}');
     }
     return outcome;
   }
@@ -470,7 +471,7 @@ final class ClaudeCodeDriver {
     try {
       spare = await _startClaude(key, credential, tools);
     } on ProcessException catch (e) {
-      _log('$signIn $model: no spare: claude did not start: ${e.message}');
+      _log('$signIn $model: no spare: claude code did not start: ${e.message}');
       return;
     }
     if (_closed) return spare.end(_log);
@@ -630,7 +631,7 @@ final class _Conversation {
 
   Future<Outcome<ModelReply>> _run() async {
     if (await _checkMcp() case final refused?) return refused;
-    claude.listen(_read, ended: () => _settle(_failed('claude exited')));
+    claude.listen(_read, ended: () => _settle(_failed('claude code exited')));
     _writeNext();
     return _settled.future;
   }
@@ -648,7 +649,7 @@ final class _Conversation {
     _settle(_failed(why));
   }
 
-  /// Asks claude, before any message, which MCP tools it offers: exactly
+  /// Asks Claude Code, before any message, which MCP tools it offers: exactly
   /// the offered ones from the driver's one server, or no model turn runs.
   /// Null when they are.
   Future<Outcome<ModelReply>?> _checkMcp() async {
@@ -656,7 +657,7 @@ final class _Conversation {
     // it, which ends with its asking the server for its tools.
     if (!await claude.toolsListed) {
       return const NothingRan(
-        'claude exited before it asked the driver for its tools',
+        'claude code exited before it asked the driver for its tools',
       );
     }
     // It registers the server only once the answer to that has reached it,
@@ -667,7 +668,7 @@ final class _Conversation {
       switch (status) {
         case null:
           return const NothingRan(
-            'claude did not say which MCP tools it offers',
+            'claude code did not say which MCP tools it offers',
           );
         case {'mcpServers': []} ||
                 {'mcpServers': [{'name': toolServer, 'status': 'pending'}]}
@@ -691,12 +692,12 @@ final class _Conversation {
             return null;
           }
           return NothingRan(
-            'claude offers MCP tools other than those asked for: '
+            'claude code offers MCP tools other than those asked for: '
             '${names.join(' ')}',
           );
         default:
           return NothingRan(
-            'claude offers MCP servers other than the driver\'s: '
+            'claude code offers MCP servers other than the driver\'s: '
             '${_clip(jsonEncode(status))}',
           );
       }
@@ -728,7 +729,7 @@ final class _Conversation {
       case Initialised(:final tools) when !_same(tools.toSet(), offered):
         // The last wall: if the flags ever stop taking every built-in tool
         // away, or another tool slips in, no model turn runs.
-        final why = 'claude offered tools: ${tools.join(' ')}';
+        final why = 'claude code offered tools: ${tools.join(' ')}';
         if (_asked) log('ALARM: $why, after the turns were written');
         _stop(why);
       case Initialised():
@@ -736,32 +737,34 @@ final class _Conversation {
       case Unreadable():
         log('unreadable line: ${_clip(line)}');
       case Compacted():
-        _stop('claude summarised the conversation in place of its turns');
+        _stop('claude code summarised the conversation in place of its turns');
       case Notice():
         break;
       case _ when !claude.initialised:
-        _stop('claude did not say which tools it offers');
+        _stop('claude code did not say which tools it offers');
       case Acknowledged() when _waitingForAck:
         _waitingForAck = false;
         _writeNext();
       case Acknowledged():
-        _stop('claude acknowledged a message it was not waiting on');
+        _stop('claude code acknowledged a message it was not waiting on');
       case Other():
         break;
       case _ when !_asked:
-        // Anything else before the last message means claude asked the
+        // Anything else before the last message means Claude Code asked the
         // model about a message that was only to be appended: a request
         // the airlock did not decide. `shouldQuery` is undocumented, so
         // every run checks it held.
         _asked = true;
-        const why = 'claude asked the model before every turn was written';
+        const why = 'claude code asked the model before every turn was written';
         log('ALARM: $why');
         _stop(why);
       case AssistantSpoke():
         break;
       case MessageStarted(:final usage):
         if (_calls.isNotEmpty) {
-          return _stop('claude asked the model again after it called tools');
+          return _stop(
+            'the model called tools, and claude code asked the model again',
+          );
         }
         _text.clear();
         _calls.clear();
@@ -774,7 +777,7 @@ final class _Conversation {
       case ToolCallStarted(:final index, :final id, :final name, :final input):
         if (!offered.contains(name)) {
           return _stop(
-            'the model called $name, which was not offered; claude answers '
+            'the model called $name, which was not offered; claude code answers '
             'that itself and may have asked the model again',
           );
         }
@@ -782,7 +785,9 @@ final class _Conversation {
       case ToolInputArriving(:final index, :final json):
         final arriving = _calls[index];
         if (arriving == null) {
-          return _stop('input for a call claude did not start');
+          return _stop(
+            'input arrived for a tool call the driver never saw start',
+          );
         }
         arriving.json.write(json);
       case MessageDelta(:final stopReason, :final output):
@@ -800,7 +805,7 @@ final class _Conversation {
   }
 
   /// Settles the call with the tools the model's message called, stopping
-  /// claude first: it waits for a permission that never comes, so it has
+  /// `claude` first: it waits for a permission that never comes, so it has
   /// asked nothing more.
   void _propose() {
     claude.kill();
@@ -897,7 +902,7 @@ final class _Claude {
     process.stderr.transform(utf8.decoder).listen((text) {
       if (_stderr.length < 64 << 10) _stderr.write(text);
     }, onDone: _stderrDone.complete);
-    // A write to a claude that has exited is its outcome to report, not a
+    // A write to a `claude` that has exited is its outcome to report, not a
     // failure of the driver's.
     unawaited(process.stdin.done.catchError((Object _) {}));
     unawaited(process.exitCode.then((_) => hasExited = true));
@@ -926,19 +931,19 @@ final class _Claude {
   final _stderrDone = Completer<void>();
   final _stderr = StringBuffer();
 
-  /// Whether claude asked the driver's server for its tools before its
+  /// Whether Claude Code asked the driver's server for its tools before its
   /// output ended.
   Future<bool> get toolsListed => _listed.future;
   final _listed = Completer<bool>();
 
-  /// The driver's control requests waiting for claude's response, by id.
+  /// The driver's control requests waiting for Claude Code's response, by id.
   final _pending = <String, Completer<Object?>>{};
   var _requests = 0;
 
   /// What it has written to stderr, its first 64 KiB.
   String get stderr => _stderr.toString();
 
-  /// Answers the control requests that are claude's dealings with the
+  /// Answers the control requests that are Claude Code's dealings with the
   /// driver's MCP server, and the responses to the driver's own; passes
   /// every other line on to the call, or keeps it for the next one.
   /// A permission request is never answered: that is what keeps an offered
@@ -988,9 +993,9 @@ final class _Claude {
         };
       }(),
       {'method': 'tools/call', 'params': {'name': final Object? name}} => () {
-        // Claude asks this only once its permission is granted, which the
+        // Claude Code asks this only once its permission is granted, which the
         // driver never grants.
-        _log('ALARM: claude asked the driver to run $name; it did not');
+        _log('ALARM: claude code asked the driver to run $name; it did not');
         return {
           'content': [
             {'type': 'text', 'text': 'not run: this driver never runs tools'},
@@ -1019,8 +1024,8 @@ final class _Claude {
     });
   }
 
-  /// Sends claude the control request [request] and returns its response's
-  /// body; null when it fails or claude's output ends first.
+  /// Sends Claude Code the control request [request] and returns its
+  /// response's body; null when it fails or `claude`'s output ends first.
   Future<Object?> control(Map<String, Object?> request) {
     if (_stdoutDone.isCompleted) return Future.value();
     final id = 'driver-${_requests++}';
@@ -1085,7 +1090,7 @@ final class _Claude {
         return process.exitCode;
       },
     );
-    // A child claude left behind can hold its pipes open after it exits.
+    // A child `claude` left behind can hold its pipes open after it exits.
     await Future.wait([_stdoutDone.future, _stderrDone.future])
         .timeout(const Duration(seconds: 2), onTimeout: () => []);
     await scratch.delete(recursive: true);

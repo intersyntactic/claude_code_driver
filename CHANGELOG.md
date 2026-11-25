@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.2
+
+- Stop reasons and log lines name Claude Code as `claude code` wherever they meant the program, so none reads as the model: `claude code exited`, `claude code did not start`, `ALARM: claude code asked the model before every turn was written`, and the rest. Anything that matches on their old wording must change. `the model called tools, and claude code asked the model again` says which did which. Input for a tool call with no start now reads `input arrived for a tool call the driver never saw start`, since that call is the model's, and the start may simply be one the driver did not read.
+
 ## 0.9.1
 
 - Every run checks that `shouldQuery: false` held. Any sign the model was asked before the last message is written now logs an alarm as well as stopping the call partway, and a bare `assistant` event counts as such a sign; before, it was let through and only the stream events caught it.
