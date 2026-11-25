@@ -2,7 +2,7 @@
 
 ## 0.9.4
 
-- Every step of a tool loop reports the context window, so how full the context is reads against its size at each step, not only at the end of a turn. Claude Code names the window only in a run's `result`, which a `ProposedToolCalls` ends before, so the driver remembers the window each seat and model's latest `FinishedReply` or `CutOffReply` named and puts it on the proposals that follow. It is null until that seat and model has replied once since the driver started.
+- Every step of a tool loop reports the context window, so how full the context is reads against its size at each model call of the loop, not only at the final reply. Claude Code names the window only in a run's `result`, which a `ProposedToolCalls` ends before, so the driver remembers the window each seat and model's latest `FinishedReply` or `CutOffReply` named and puts it on the proposals that follow. It is null until that seat and model has replied once since the driver started.
 
 ## 0.9.3
 
