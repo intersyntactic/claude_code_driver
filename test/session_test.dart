@@ -116,7 +116,7 @@ void main() {
       final pid = fake.reads.last;
       expect(pid, isNot(first), reason: why);
       expect(answer, 'reply $pid 1', reason: why);
-      // A fresh claude is written the whole history, the last user turns
+      // A fresh `claude` is written the whole history, the last user turns
       // the message it answers.
       expect(
         fake.messagesTo(pid).last,
@@ -187,7 +187,7 @@ void main() {
     addTearDown(driver.close);
     expect(
       await ask([('user', 'task')]),
-      'stopped: claude summarised the conversation in place of its turns',
+      'stopped: claude code summarised the conversation in place of its turns',
     );
     await fake.until(() => !alive(fake.reads.single));
   });

@@ -416,7 +416,7 @@ void main() {
             ('toolu_1', 'mcp__tools__fetch_page', {'url': 'https://e.x/1'}),
             ('toolu_2', 'mcp__tools__fetch_page', {'url': 'https://e.x/2'}),
           ]),
-          // What claude would go on to if it were not stopped.
+          // What Claude Code would go on to if it were not stopped.
           delta('asked again'),
           result('never'),
         ],
@@ -497,7 +497,7 @@ void main() {
     );
     expect(
       nothingRan(outcome),
-      'claude offers MCP tools other than those asked for: '
+      'claude code offers MCP tools other than those asked for: '
       'mcp__tools__fetch_page mcp__tools__rm',
     );
     expect(fake.sent, isEmpty);
@@ -513,7 +513,7 @@ void main() {
         {'role': 'user', 'content': 'c'},
       ]),
     );
-    expect(nothingRan(outcome), 'claude offered tools: Bash Read');
+    expect(nothingRan(outcome), 'claude code offered tools: Bash Read');
     expect(reported, isEmpty);
     expect(fake.conversation, hasLength(1), reason: 'only the first appended');
   });
@@ -529,9 +529,9 @@ void main() {
       ]),
       log: log,
     );
-    expect(stopped(outcome), 'claude offered tools: Bash Read');
+    expect(stopped(outcome), 'claude code offered tools: Bash Read');
     expect(reported, isEmpty);
-    expect(log.first, contains('ALARM: claude offered tools: Bash Read'));
+    expect(log.first, contains('ALARM: claude code offered tools: Bash Read'));
   });
 
   test('refuses an init that does not list its tools', () async {
@@ -541,7 +541,7 @@ void main() {
         result('ok'),
       ]),
     );
-    expect(stopped(outcome), 'claude offered tools: ?');
+    expect(stopped(outcome), 'claude code offered tools: ?');
   });
 
   test('nothing runs for a request that breaks a rule of the conversation, '
@@ -781,7 +781,7 @@ void main() {
   );
 
   test('reports what the last model call spent, and the window', () async {
-    // The shape claude 2.1.311 printed on 19 Nov, two calls in one run.
+    // The shape Claude Code 2.1.311 printed on 19 Nov, two calls in one run.
     final (outcome, _) = await ask(
       fake.script([
         init([]),
@@ -853,7 +853,7 @@ void main() {
   });
 
   test('lets a system notice come before claude says its tools', () async {
-    // What claude 2.1.323 printed first with --input-format stream-json.
+    // What Claude Code 2.1.323 printed first with --input-format stream-json.
     final (outcome, _) = await ask(
       fake.script([
         jsonEncode({
@@ -878,7 +878,7 @@ void main() {
   });
 
   test('stops partway, saying why, when claude reports an error', () async {
-    // What claude 2.1.311 printed, signed in to nothing.
+    // What Claude Code 2.1.311 printed, signed in to nothing.
     final (outcome, _) = await ask(
       fake.script([
         init([]),
@@ -920,17 +920,17 @@ void main() {
       );
       expect(
         stopped(outcome),
-        'claude asked the model before every turn was written',
+        'claude code asked the model before every turn was written',
       );
       expect(reported, isEmpty);
-      expect(log.first, contains('ALARM: claude asked the model before'));
+      expect(log.first, contains('ALARM: claude code asked the model before'));
     }
   });
 
   test('stops partway when claude exits without a result', () async {
     final log = <String>[];
     final (outcome, _) = await ask(fake.script([init([])], exit: 3), log: log);
-    expect(stopped(outcome), 'claude exited');
+    expect(stopped(outcome), 'claude code exited');
     expect(log.single, contains('exited 3'));
     expect(log.single, isNot(contains(token.token)));
   });
@@ -955,7 +955,7 @@ void main() {
 
   test('nothing runs when claude cannot be started', () async {
     final (outcome, _) = await ask('${fake.dir.path}/no-such-claude');
-    expect(nothingRan(outcome), startsWith('claude did not start'));
+    expect(nothingRan(outcome), startsWith('claude code did not start'));
   });
 
   test('gives 2.1.112 every flag but the two it lacks', () async {
