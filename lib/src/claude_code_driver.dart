@@ -147,6 +147,11 @@ final class ClaudeCodeDriver {
   /// The idle sessions, least recently used first.
   final _idle = <_Claude>[];
 
+  /// Each seat and model's context window, as its latest whole reply said.
+  /// Claude Code names the window only in a run's result, so a proposal of
+  /// tools, which ends before one, is given the window remembered here.
+  final _contextWindows = <(ModelSignInName, ModelName), int>{};
+
   var _closed = false;
 
   /// The only variable of the driver's own environment `claude` is given.
@@ -367,8 +372,15 @@ final class ClaudeCodeDriver {
       {for (final tool in request.tools) offeredName(tool.name.value)},
       report: report,
       model: model,
+      contextWindow: _contextWindows[(signIn, model)],
       log: (line) => _log('$call: $line'),
     ).run(_limit);
+    if (outcome case Ran<ModelReply>(
+      output: FinishedReply(usage: ModelUsage(contextWindow: final window?)) ||
+          CutOffReply(usage: ModelUsage(contextWindow: final window?)),
+    )) {
+      _contextWindows[(signIn, model)] = window;
+    }
     // Kept only after a whole reply, which a trajectory's next call repeats
     // as its agent turn.
     if (outcome case Ran<ModelReply>(output: FinishedReply(:final text))
@@ -590,6 +602,7 @@ final class _Conversation {
     this.offered, {
     required this.report,
     required this.model,
+    required this.contextWindow,
     required this.log,
   });
 
@@ -600,6 +613,9 @@ final class _Conversation {
   final Set<String> offered;
   final Report report;
   final ModelName model;
+
+  /// The window a proposal of tools reports, null when none is known yet.
+  final int? contextWindow;
   final void Function(String line) log;
 
   final _settled = Completer<Outcome<ModelReply>>();
@@ -845,7 +861,11 @@ final class _Conversation {
         ProposedToolCalls(
           text: '$_text',
           calls: calls,
-          usage: ClaudeEvent.streamUsage(_startUsage, _output),
+          usage: ClaudeEvent.streamUsage(
+            _startUsage,
+            _output,
+            contextWindow: contextWindow,
+          ),
         ),
       ),
     );
@@ -1239,9 +1259,14 @@ sealed class ClaudeEvent {
   };
 
   /// What one streamed model message spent: [start] is the usage its start
-  /// reported, [output] its tokens out as its end reported them. Null when
-  /// they say nothing readable. Its context window is not known here.
-  static ModelUsage? streamUsage(Object? start, int? output) => switch (start) {
+  /// reported, [output] its tokens out as its end reported them, and
+  /// [contextWindow] the window known from elsewhere, since the stream does
+  /// not say it. Null when they say nothing readable.
+  static ModelUsage? streamUsage(
+    Object? start,
+    int? output, {
+    int? contextWindow,
+  }) => switch (start) {
     {
       'input_tokens': final int input,
       'cache_read_input_tokens': final int cacheRead,
@@ -1255,6 +1280,7 @@ sealed class ClaudeEvent {
           {'cache_creation_input_tokens': final int created} => created,
           _ => null,
         },
+        contextWindow: contextWindow,
       ),
     _ => null,
   };

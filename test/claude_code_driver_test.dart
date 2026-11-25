@@ -818,6 +818,61 @@ void main() {
     );
   });
 
+  test('a proposal reports the window its seat and model last replied '
+      'with', () async {
+    String proposes() => fake.script(
+      [
+        init(['mcp__tools__fetch_page']),
+        ...proposing('', [
+          ('toolu_1', 'mcp__tools__fetch_page', {'url': 'https://e.x/1'}),
+        ]),
+      ],
+      mcpTools: ['fetch_page'],
+    );
+    String replies() => fake.script(
+      [
+        init(['mcp__tools__fetch_page']),
+        result(
+          'ok',
+          more: {
+            'usage': tokens(2, 0, 595, 4),
+            'modelUsage': {
+              'claude-haiku-5-5': {'contextWindow': 1000000},
+            },
+          },
+        ),
+      ],
+      mcpTools: ['fetch_page'],
+    );
+    Future<int?> window({ModelName? model}) async {
+      final (outcome, _) = await call(
+        fake.socket,
+        model: model,
+        request: withTools(const [UserSaid('fetch it')]),
+      );
+      return switch (outcome) {
+        Ran(:final output) => output.usage?.contextWindow,
+        _ => fail('did not run: $outcome'),
+      };
+    }
+
+    final driver = await fake.start(proposes());
+    try {
+      expect(await window(), isNull, reason: 'no reply yet names it');
+      replies();
+      expect(await window(), 1000000);
+      proposes();
+      expect(await window(), 1000000);
+      expect(
+        await window(model: ModelName.parse('claude-sonnet-5-5')),
+        isNull,
+        reason: 'another model has its own window',
+      );
+    } finally {
+      await driver.close();
+    }
+  });
+
   test('falls back to the run totals when no iteration is listed', () async {
     final (outcome, _) = await ask(
       fake.script([
