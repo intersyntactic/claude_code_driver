@@ -1,8 +1,12 @@
 # Changelog
 
+## 0.9.5
+
+- is_effects ^0.17.0. is_effects no longer re-exports the model types, so the driver imports them from is_model_vocabulary, which it already depended on. Nothing on the wire changes: is_effects 0.16 and 0.17 change no JSON, so a 0.9.5 driver and an airlock on an older is_effects read each other unchanged.
+
 ## 0.9.4
 
-- Every step of a tool loop reports the context window, so how full the context is reads against its size at each model call of the loop, not only at the final reply. Claude Code names the window only in a run's `result`, which a `ProposedToolCalls` ends before, so the driver remembers the window each seat and model's latest `FinishedReply` or `CutOffReply` named and puts it on the proposals that follow. It is null until that seat and model has replied once since the driver started.
+- Every model call of a tool loop reports the context window, so how full the context is reads against its size at each one, not only at the final reply. Claude Code names the window only in a run's `result`, which a `ProposedToolCalls` ends before, so the driver remembers the window each seat and model's latest `FinishedReply` or `CutOffReply` named and puts it on the proposals that follow. It is null until that seat and model has replied once since the driver started.
 
 ## 0.9.3
 
