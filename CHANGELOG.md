@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0
+
+- Breaking: on checked_json ^0.3.0, is_model_vocabulary ^0.3.0 and is_effects ^0.18.0. The driver now refuses JSON that names a key twice in one object, or holds an integer past 2^53 - 1, wherever it reads JSON: a call on its socket, the request inside it, the sign-in's credential file, and Claude Code's output. It used to keep the last of two values without a word.
+- A request refused this way runs nothing, and says why: `not a request: unreadable JSON: duplicate key "content"`. A request that is not JSON at all now says why too (`unreadable JSON: Unexpected character`, where it said `not JSON`).
+- A tool call whose input names a key twice, or holds such an integer, stops partway and names the reason: `the model called mcp__tools__fetch_page with unreadable input: duplicate key "url"`. Before, the driver kept the last value and proposed the call as if the model had written it once.
+
 ## 0.9.5
 
 - is_effects ^0.17.0. is_effects no longer re-exports the model types, so the driver imports them from is_model_vocabulary, which it already depended on. Nothing on the wire changes: is_effects 0.16 and 0.17 change no JSON, so a 0.9.5 driver and an airlock on an older is_effects read each other unchanged.

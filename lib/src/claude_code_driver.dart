@@ -238,7 +238,9 @@ final class ClaudeCodeDriver {
       final String request;
       try {
         (signIn, model, systemPrompt, request) = decodeModelCall(
-          jsonDecode(utf8.decode(bytes.takeBytes(), allowMalformed: true)),
+          decodeJsonRefusingDuplicateKeysAndUnsafeIntegers(
+            utf8.decode(bytes.takeBytes(), allowMalformed: true),
+          ),
         );
       } on FormatException catch (e) {
         _write(socket, Finished(NothingRan('not a call: ${e.message}')));
@@ -836,12 +838,19 @@ final class _Conversation {
     for (final index in _calls.keys.toList()..sort()) {
       final arriving = _calls[index]!;
       final id = ToolCallId.parse(arriving.id);
-      final input = arriving.input();
-      if (id == null || input == null) {
+      if (id == null) {
+        return _settle(
+          _failed('the model called ${arriving.name} with an unreadable id'),
+        );
+      }
+      final ToolInput input;
+      try {
+        input = arriving.input();
+      } on FormatException catch (e) {
         return _settle(
           _failed(
-            'the model called ${arriving.name} with an unreadable '
-            '${id == null ? 'id' : 'input'}',
+            'the model called ${arriving.name} with unreadable input: '
+            '${e.message}',
           ),
         );
       }
@@ -888,15 +897,14 @@ final class _CallArriving {
   final json = StringBuffer();
 
   /// Its input, encoded once, here: as it arrived, or as its block began
-  /// when nothing arrived. Null unless it is a JSON object.
-  ToolInput? input() {
-    final Object? decoded;
-    try {
-      decoded = json.isEmpty ? started : jsonDecode('$json');
-    } on FormatException {
-      return null;
-    }
-    return ToolInput.parse(jsonEncode(decoded));
+  /// when nothing arrived. A [FormatException] says why when it is not one
+  /// JSON object, names a key twice, or holds an integer past 2^53 - 1.
+  ToolInput input() {
+    final decoded = json.isEmpty
+        ? started
+        : decodeJsonRefusingDuplicateKeysAndUnsafeIntegers('$json');
+    return ToolInput.parse(jsonEncode(decoded)) ??
+        (throw const FormatException('not a JSON object'));
   }
 }
 
@@ -970,7 +978,7 @@ final class _Claude {
   void _route(String line) {
     final Object? json;
     try {
-      json = jsonDecode(line);
+      json = decodeJsonRefusingDuplicateKeysAndUnsafeIntegers(line);
     } on FormatException {
       (_onLine ?? _unread.add)(line);
       return;
@@ -1164,7 +1172,7 @@ sealed class ClaudeEvent {
   static ClaudeEvent parse(String line, {required ModelName model}) {
     final Object? json;
     try {
-      json = jsonDecode(line);
+      json = decodeJsonRefusingDuplicateKeysAndUnsafeIntegers(line);
     } on FormatException {
       return const Unreadable();
     }

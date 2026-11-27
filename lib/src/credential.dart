@@ -1,6 +1,6 @@
-import 'dart:convert';
 import 'dart:io';
 
+import 'package:checked_json/checked_json.dart';
 import 'package:is_effects/is_effects.dart';
 
 /// A model sign-in's secret. Each kind is a way Claude Code can be signed
@@ -13,9 +13,11 @@ sealed class Credential {
   static Credential parse(String raw) {
     final Object? json;
     try {
-      json = jsonDecode(raw);
+      json = decodeJsonRefusingDuplicateKeysAndUnsafeIntegers(raw);
     } on FormatException {
-      throw const FormatException('credential is not JSON');
+      throw const FormatException(
+        'credential is not JSON, names a key twice, or holds an integer past 2^53 - 1',
+      );
     }
     return switch (json) {
       {'kind': 'claude-code-setup-token', 'token': final String token}
