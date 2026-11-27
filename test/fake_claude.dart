@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:is_claude_code_driver/is_claude_code_driver.dart';
 import 'package:is_effects/is_effects.dart';
+import 'package:is_model_vocabulary/is_model_vocabulary.dart';
 import 'package:is_unix_socket_user_check/is_unix_socket_user_check.dart';
 
 final seat = ModelSignInName.parse('nick-claude-team')!;
