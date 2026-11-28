@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.0
+
+- Breaking: on checked_json ^0.4.0, is_model_vocabulary ^0.4.0 and is_effects ^0.19.0. A `JsonObject` in the driver's API, such as a tool's `inputSchema`, is now checked_json 0.4.0's, which can't be changed after it's built. No code in the driver changed, and nothing on the wire changes.
+
 ## 0.10.0
 
 - Breaking: on checked_json ^0.3.0, is_model_vocabulary ^0.3.0 and is_effects ^0.18.0. The driver now refuses JSON that names a key twice in one object, or holds an integer past 2^53 - 1, wherever it reads JSON: a call on its socket, the request inside it, the sign-in's credential file, and Claude Code's output. It used to keep the last of two values without a word.

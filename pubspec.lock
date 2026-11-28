@@ -45,10 +45,10 @@ packages:
     dependency: "direct main"
     description:
       name: checked_json
-      sha256: "0538c8336bfcac44a0ee6f652205ec63bc53f05a5918ca628e4e5b005bbf6f28"
+      sha256: f945a6154f5737707c35f901dd37a7c5d3bc8a8a4dc2104f55abb68745b84a77
       url: "https://pub.dev"
     source: hosted
-    version: "0.3.0"
+    version: "0.4.0"
   cli_config:
     dependency: transitive
     description:
@@ -157,18 +157,18 @@ packages:
     dependency: "direct main"
     description:
       name: is_effects
-      sha256: c03f9ba98bdc717846f79dcf4a10edadaa1397e2019f025aa85187fbf3925b49
+      sha256: "7fbcde3af0d2a77dd6c39e517167e473ad711daae0423588df72c9c715cb6177"
       url: "https://pub.dev"
     source: hosted
-    version: "0.18.0"
+    version: "0.19.0"
   is_model_vocabulary:
     dependency: "direct main"
     description:
       name: is_model_vocabulary
-      sha256: "509e34dfff4058715d21bb506ef95a9bf14c82779b1001a8e25933a8e0a0535f"
+      sha256: "10f98c4205552175128cefc1bf95dd93bd969d2018867b36878ee0af5fee10c2"
       url: "https://pub.dev"
     source: hosted
-    version: "0.3.0"
+    version: "0.4.0"
   is_path_confinement:
     dependency: transitive
     description:
