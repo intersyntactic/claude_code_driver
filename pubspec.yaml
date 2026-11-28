@@ -3,16 +3,16 @@ description: >-
   intersyntactic's Claude Code driver: asks the model through `claude -p`
   under a Claude Code seat, with every built-in tool switched off, holding
   the seat's token so no loop or logbook ever sees it.
-version: 0.9.5
+version: 0.10.0
 repository: https://github.com/intersyntactic/claude_code_driver
 
 environment:
   sdk: ^3.13.0
 
 dependencies:
-  checked_json: ^0.2.1
-  is_effects: ^0.17.0
-  is_model_vocabulary: ^0.2.0
+  checked_json: ^0.3.0
+  is_effects: ^0.18.0
+  is_model_vocabulary: ^0.3.0
   is_unix_socket_user_check: ^0.2.1
 
 dev_dependencies:

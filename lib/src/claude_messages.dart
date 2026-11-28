@@ -27,9 +27,9 @@ String offeredName(String name) => '$offeredPrefix$name';
 ModelRequest requestOf(String request) {
   final Object? json;
   try {
-    json = jsonDecode(request);
-  } on FormatException {
-    throw const FormatException('not JSON');
+    json = decodeJsonRefusingDuplicateKeysAndUnsafeIntegers(request);
+  } on FormatException catch (e) {
+    throw FormatException('unreadable JSON: ${e.message}');
   }
   if (JsonObject.parse(json) != null) return _decoded(request);
   return switch (json) {

@@ -470,6 +470,37 @@ void main() {
     expect(stopped(outcome), startsWith('the model called mcp__tools__nope'));
   });
 
+  test(
+    'a call whose input names a key twice stops partway, saying so',
+    () async {
+      final lines = proposing('', [('toolu_1', 'mcp__tools__fetch_page', {})]);
+      lines[2] = streamed({
+        'type': 'content_block_delta',
+        'index': 1,
+        'delta': {
+          'type': 'input_json_delta',
+          'partial_json':
+              '{"url":"https://a.example","url":"https://b.example"}',
+        },
+      });
+      final (outcome, _) = await ask(
+        fake.script(
+          [
+            init(['mcp__tools__fetch_page']),
+            ...lines,
+          ],
+          mcpTools: ['fetch_page'],
+        ),
+        request: withTools(const [UserSaid('x')]),
+      );
+      expect(
+        stopped(outcome),
+        'the model called mcp__tools__fetch_page with unreadable input: '
+        'duplicate key "url"',
+      );
+    },
+  );
+
   test('calls that end for another reason stop partway', () async {
     final (outcome, _) = await ask(
       fake.script(
@@ -651,8 +682,17 @@ void main() {
   test('nothing runs for a request that is not one', () async {
     final claude = fake.script([init([]), result('ok')]);
     for (final (request, why) in [
-      ('User: hi', 'not JSON'),
-      ('', 'not JSON'),
+      ('User: hi', 'unreadable JSON: Unexpected character'),
+      ('', 'unreadable JSON: Unexpected end of input'),
+      (
+        '[{"role":"user","content":"hi","content":"bye"}]',
+        'unreadable JSON: duplicate key "content"',
+      ),
+      (
+        '{"tools":[],"turns":[],"n":9007199254740993}',
+        'unreadable JSON: integer past 2^53 - 1 in size, which a web build '
+            'reads inexactly',
+      ),
       ('[]', 'no turns'),
       ('"hi"', 'neither {tools, turns} nor an array of turns'),
       (
