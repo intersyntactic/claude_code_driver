@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:is_claude_code_driver/is_claude_code_driver.dart';
-import 'package:is_effects/is_effects.dart';
+import 'package:is_outcome_vocabulary/is_outcome_vocabulary.dart';
 import 'package:is_model_vocabulary/is_model_vocabulary.dart';
 import 'package:is_unix_socket_user_check/is_unix_socket_user_check.dart';
 import 'package:test/test.dart';
@@ -30,10 +30,7 @@ void main() {
     addTearDown(driver.close);
     final (outcome, reported) = await call(fake.socket);
     expect((outcome as Ran<ModelReply>).output.text, 'hello');
-    expect(
-      [for (final p in reported) (p as ReplyArriving).text],
-      ['hel', 'lo'],
-    );
+    expect([for (final p in reported) p.text], ['hel', 'lo']);
     expect(fake.sentTurns, ['hello']);
     expect(fake.noted('system-prompt'), 'You are Cam.');
   });
@@ -60,7 +57,21 @@ void main() {
     expect(
       (await rawCall(fake.socket, '{}')).trim(),
       '{"kind":"finished","outcome":{"kind":"nothingRan",'
-      '"why":"not a call: modelCall.signIn: not a string"}}',
+      '"why":"not a call: `signIn` is not a string"}}',
+    );
+    expect(fake.ran, isFalse);
+  });
+
+  test('refuses a call with a key it does not expect', () async {
+    final driver = await fake.start(claude);
+    addTearDown(driver.close);
+    expect(
+      await rawCall(
+        fake.socket,
+        '{"signIn":"nick","model":"m","systemPrompt":"","request":"x",'
+        '"effort":"high"}',
+      ),
+      allOf(contains('not a call: '), contains('`effort`')),
     );
     expect(fake.ran, isFalse);
   });
@@ -73,7 +84,7 @@ void main() {
         fake.socket,
         '{"signIn":"Nick!","model":"m","systemPrompt":"","request":"x"}',
       ),
-      contains('not a call: modelCall.signIn: not a model sign-in'),
+      contains('not a call: `signIn` is not a model sign-in'),
     );
     expect(fake.ran, isFalse);
   });

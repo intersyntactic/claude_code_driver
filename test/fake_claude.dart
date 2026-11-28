@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:is_claude_code_driver/is_claude_code_driver.dart';
-import 'package:is_effects/is_effects.dart';
+import 'package:is_outcome_vocabulary/is_outcome_vocabulary.dart';
 import 'package:is_model_vocabulary/is_model_vocabulary.dart';
 import 'package:is_unix_socket_user_check/is_unix_socket_user_check.dart';
 
@@ -392,22 +392,31 @@ bool alive(String pid) => Process.runSync('kill', ['-0', pid]).exitCode == 0;
 
 /// One call to the driver at [socket] as the wire carries it: the outcome,
 /// and what was reported on the way.
-Future<(Outcome<ModelReply>, List<Progress>)> call(
+Future<(Outcome<ModelReply>, List<ReplyArriving>)> call(
   File socket, {
   ModelSignInName? signIn,
   ModelName? model,
   String systemPrompt = 'You are Cam.',
   String request = '[{"role":"user","content":"hello"}]',
 }) async {
-  final reported = <Progress>[];
+  final reported = <ReplyArriving>[];
   final lines = await rawCall(
     socket,
     jsonEncode(
-      encodeModelCall(signIn ?? seat, model ?? haiku, systemPrompt, request),
+      ModelCall(
+        signIn: signIn ?? seat,
+        model: model ?? haiku,
+        systemPrompt: systemPrompt,
+        request: request,
+      ).toJson(),
     ),
   );
   for (final line in const LineSplitter().convert(lines)) {
-    switch (decodeProgramMessage(jsonDecode(line), decodeModelReply)) {
+    switch (decodeProgramMessage(
+      jsonDecode(line),
+      (json, _) => ReplyArriving.fromJson(json),
+      (json, _) => ModelReply.fromJson(json),
+    )) {
       case Reported(:final progress):
         reported.add(progress);
       case Finished(:final outcome):

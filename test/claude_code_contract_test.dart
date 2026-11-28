@@ -15,7 +15,7 @@ import 'dart:io';
 
 import 'package:checked_json/checked_json.dart';
 import 'package:is_claude_code_driver/is_claude_code_driver.dart';
-import 'package:is_effects/is_effects.dart';
+import 'package:is_outcome_vocabulary/is_outcome_vocabulary.dart';
 import 'package:is_model_vocabulary/is_model_vocabulary.dart';
 import 'package:test/test.dart';
 

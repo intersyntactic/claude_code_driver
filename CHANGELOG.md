@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.0
+
+- Breaking: no longer depends on is_effects, which has been split into vocabularies. The driver depends on is_outcome_vocabulary ^0.1.0 (`Outcome`, `ProgramMessage`) and is_model_vocabulary ^0.5.0 (`ModelCall`, `ReplyArriving`, the model names) instead. The JSON on the socket is unchanged: a reply still streams as `{"kind":"reported","progress":{"kind":"replyArriving","text":…}}` and ends with one `finished` line.
+- A call on the socket with a key besides `signIn`, `model`, `systemPrompt` and `request` is refused: nothing runs, and the reason names the key. Before, an extra key was ignored. So if a model call ever gains a field, deploy the drivers before the airlock that sends it.
+- A refused call's reason is worded as is_model_vocabulary words it: `` not a call: `signIn` is not a string ``, where it said `not a call: modelCall.signIn: not a string`. Anything matching on the old wording must change.
+- A request that offers a tool by name alone (`namedTools`, or a `NamedToolsDefined` turn, new in is_model_vocabulary 0.5.0) is refused: nothing runs, and the reason is `not a request: this driver offers no tool by name alone`. A request without them reads as before.
+
 ## 0.11.0
 
 - Breaking: on checked_json ^0.4.0, is_model_vocabulary ^0.4.0 and is_effects ^0.19.0. A `JsonObject` in the driver's API, such as a tool's `inputSchema`, is checked_json 0.4.0's, which can't be changed after it's built. 0.10.0 was never published; its changes are part of this release.

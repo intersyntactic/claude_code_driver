@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:checked_json/checked_json.dart';
 import 'package:is_claude_code_driver/is_claude_code_driver.dart';
-import 'package:is_effects/is_effects.dart';
+import 'package:is_outcome_vocabulary/is_outcome_vocabulary.dart';
 import 'package:is_model_vocabulary/is_model_vocabulary.dart';
 import 'package:test/test.dart';
 
@@ -17,7 +17,7 @@ void main() {
 
   /// Starts the driver with [claude], makes one call through its socket,
   /// and closes it.
-  Future<(Outcome<ModelReply>, List<Progress>)> ask(
+  Future<(Outcome<ModelReply>, List<ReplyArriving>)> ask(
     String claude, {
     Duration limit = const Duration(seconds: 10),
     List<String>? log,
@@ -449,10 +449,7 @@ void main() {
       proposal.usage,
       const ModelUsage(input: 7, cacheRead: 300, output: 25, cacheCreation: 40),
     );
-    expect(
-      [for (final p in reported) (p as ReplyArriving).text],
-      ['Let me look.'],
-    );
+    expect([for (final p in reported) p.text], ['Let me look.']);
     expect(log, isEmpty, reason: 'a proposal is a claude killed as it must be');
   });
 
@@ -722,6 +719,27 @@ void main() {
     expect(fake.ran, isFalse);
   });
 
+  test('nothing runs for a request offering a tool by name alone', () async {
+    final claude = fake.script([init([]), result('ok')]);
+    final request = ModelRequest(
+      tools: const [],
+      namedTools: [
+        OfferedTool(
+          name: ToolName.parse('fetch_page')!,
+          description: 'Fetches a page.',
+          inputSchema: JsonObject.of({'type': 'object'}),
+        ),
+      ],
+      turns: const [UserSaid('hi')],
+    );
+    final (outcome, _) = await ask(claude, request: request.encode());
+    expect(
+      nothingRan(outcome),
+      'not a request: this driver offers no tool by name alone',
+    );
+    expect(fake.ran, isFalse);
+  });
+
   test('streams the reply and gives the whole of it', () async {
     final (outcome, reported) = await ask(
       fake.script([
@@ -733,10 +751,7 @@ void main() {
       ]),
     );
     expect((outcome as Ran<ModelReply>).output.text, 'Hello.');
-    expect(
-      [for (final p in reported) (p as ReplyArriving).text],
-      ['Hel', 'lo.'],
-    );
+    expect([for (final p in reported) p.text], ['Hel', 'lo.']);
   });
 
   test('runs claude with every built-in tool off, and nothing else of '

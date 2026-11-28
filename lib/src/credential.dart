@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:checked_json/checked_json.dart';
-import 'package:is_effects/is_effects.dart';
+import 'package:is_model_vocabulary/is_model_vocabulary.dart';
 
 /// A model sign-in's secret. Each kind is a way Claude Code can be signed
 /// in, so a new kind is a new case here, never a change to the caller.
