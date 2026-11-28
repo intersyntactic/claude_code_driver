@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:is_effects/is_effects.dart';
+import 'package:is_outcome_vocabulary/is_outcome_vocabulary.dart';
 import 'package:is_model_vocabulary/is_model_vocabulary.dart';
 import 'package:test/test.dart';
 

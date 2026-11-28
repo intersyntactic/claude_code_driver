@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:is_effects/is_effects.dart';
+import 'package:is_outcome_vocabulary/is_outcome_vocabulary.dart';
 import 'package:test/test.dart';
 
 import 'fake_claude.dart';

@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:is_effects/is_effects.dart';
+import 'package:is_outcome_vocabulary/is_outcome_vocabulary.dart';
 import 'package:is_model_vocabulary/is_model_vocabulary.dart';
 import 'package:checked_json/checked_json.dart';
 import 'package:is_unix_socket_user_check/is_unix_socket_user_check.dart';
@@ -232,12 +232,9 @@ final class ClaudeCodeDriver {
         await socket.close();
         return;
       }
-      final ModelSignInName signIn;
-      final ModelName model;
-      final String systemPrompt;
-      final String request;
+      final ModelCall call;
       try {
-        (signIn, model, systemPrompt, request) = decodeModelCall(
+        call = ModelCall.fromJson(
           decodeJsonRefusingDuplicateKeysAndUnsafeIntegers(
             utf8.decode(bytes.takeBytes(), allowMalformed: true),
           ),
@@ -248,11 +245,11 @@ final class ClaudeCodeDriver {
         return;
       }
       final outcome = await _ask(
-        signIn,
-        model,
-        systemPrompt,
-        request,
-        report: (progress) => _write(socket, Reported(progress)),
+        call.signIn,
+        call.model,
+        call.systemPrompt,
+        call.request,
+        report: (piece) => _write(socket, Reported(piece)),
       );
       _write(socket, Finished(outcome));
       await socket.close();
@@ -261,12 +258,14 @@ final class ClaudeCodeDriver {
     }
   }
 
-  static void _write(Socket socket, ProgramMessage<ModelReply> message) =>
-      socket.add(
-        utf8.encode(
-          '${jsonEncode(encodeProgramMessage(message, encodeModelReply))}\n',
-        ),
-      );
+  static void _write(
+    Socket socket,
+    ProgramMessage<ReplyArriving, ModelReply> message,
+  ) => socket.add(
+    utf8.encode(
+      '${jsonEncode(encodeProgramMessage(message, (p) => p.toJson(), (r) => r.toJson()))}\n',
+    ),
+  );
 
   /// Every flag but the MCP server's is there to take something away.
   /// `--tools ""` offers the model no built-in tool; `--restricted` removes
@@ -321,7 +320,7 @@ final class ClaudeCodeDriver {
     ModelName model,
     String systemPrompt,
     String text, {
-    required Report report,
+    required void Function(ReplyArriving piece) report,
   }) async {
     final credential = _signIns[signIn];
     if (credential == null) return NothingRan('no model sign-in $signIn');
@@ -612,7 +611,7 @@ final class _Conversation {
 
   /// The names the tools are offered under, as the model sees them.
   final Set<String> offered;
-  final Report report;
+  final void Function(ReplyArriving piece) report;
   final ModelName model;
 
   /// The window a proposal of tools reports, null when none is known yet.

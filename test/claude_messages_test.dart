@@ -52,4 +52,20 @@ void main() {
     expect(types(messages.last), ['tool_result', 'text']);
     expect(messages.last.content.last, {'type': 'text', 'text': 'and then?'});
   });
+
+  test('refuses a turn defining tools known by name alone', () {
+    expect(
+      () => messagesOf([
+        const UserSaid('hi'),
+        NamedToolsDefined([ToolName.parse('fetch_page')!]),
+      ]),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message,
+          'message',
+          'turn 1: this driver offers no tool by name alone',
+        ),
+      ),
+    );
+  });
 }

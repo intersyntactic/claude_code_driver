@@ -58,12 +58,21 @@ ModelRequest requestOf(String request) {
 }
 
 ModelRequest _decoded(String request) {
+  final ModelRequest decoded;
   try {
-    return ModelRequest.decode(request);
+    decoded = ModelRequest.decode(request);
   } on JsonFieldException catch (e) {
     throw FormatException('$e');
   }
+  if (decoded.namedTools.isNotEmpty) {
+    throw const FormatException(namedToolsRefused);
+  }
+  return decoded;
 }
+
+/// Why a request offering tools by name alone is refused: this driver
+/// offers every tool in full, so it has no way to hold one back.
+const namedToolsRefused = 'this driver offers no tool by name alone';
 
 /// Who says a message to Claude Code.
 enum MessageRole { user, assistant }
@@ -154,6 +163,8 @@ List<ClaudeMessage> messagesOf(List<ModelTurn> turns) {
           });
         }
         calledAt = i;
+      case NamedToolsDefined():
+        throw FormatException('turn $i: $namedToolsRefused');
     }
   }
   if (waiting.isNotEmpty) {
